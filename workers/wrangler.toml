@@ -1,0 +1,19 @@
+# Cloudflare Workers 配置
+
+name = "stock-dashboard-api"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+# Workers 部署后会得到形如:
+# https://stock-dashboard-api.YOUR-ACCOUNT.workers.dev
+
+# 如果要绑定自定义域名，在这里配置:
+# [routes]
+# pattern = "api.your-domain.com/*"
+# zone_name = "your-domain.com"
+
+# Pages 绑定 Worker（可选）
+# 配置后，Pages 域名下的 /api/* 请求会转发到这个 Worker
+[compatibility_flags]
+# 允许未加密的 fetch
+nodejs_compat = true

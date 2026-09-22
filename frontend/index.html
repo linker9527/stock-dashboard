@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>股票看板 - 实时行情</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: #1a1a1a;
+      color: #e0e0e0;
+      min-height: 100vh;
+      padding: 16px;
+    }
+    h1 { text-align: center; margin-bottom: 16px; font-size: 22px; color: #fff; }
+    
+    .search-bar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+      max-width: 600px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    .search-bar input {
+      flex: 1;
+      padding: 10px 12px;
+      border: 1px solid #444;
+      border-radius: 6px;
+      background: #2a2a2a;
+      color: #fff;
+      font-size: 14px;
+      outline: none;
+    }
+    .search-bar input:focus { border-color: #669; }
+    .search-bar button {
+      padding: 10px 20px;
+      background: #4a90d9;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .search-bar button:hover { background: #3a7bc4; }
+    .search-bar .remove { background: #d94a4a; }
+    .search-bar .remove:hover { background: #c43a3a; }
+    
+    .hint {
+      text-align: center;
+      color: #666;
+      font-size: 12px;
+      margin-bottom: 12px;
+    }
+    
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 12px;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    
+    .card {
+      background: #252525;
+      border-radius: 8px;
+      padding: 16px;
+      border: 1px solid #333;
+      position: relative;
+    }
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .card-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: #fff;
+    }
+    .card-code {
+      font-size: 12px;
+      color: #888;
+      margin-left: 8px;
+    }
+    .close-btn {
+      background: none;
+      border: none;
+      color: #666;
+      cursor: pointer;
+      font-size: 18px;
+      padding: 0 4px;
+    }
+    .close-btn:hover { color: #d94a4a; }
+    
+    .price-area {
+      text-align: center;
+      margin: 12px 0;
+    }
+    .price {
+      font-size: 36px;
+      font-weight: 700;
+    }
+    .price.up { color: #ff4d4d; }
+    .price.down { color: #4dff4d; }
+    .price.flat { color: #e0e0e0; }
+    .change {
+      font-size: 16px;
+      margin-top: 4px;
+    }
+    .change.up { color: #ff4d4d; }
+    .change.down { color: #4dff4d; }
+    .change.flat { color: #aaa; }
+    
+    .details {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      font-size: 13px;
+      margin-top: 12px;
+    }
+    .detail-item {
+      display: flex;
+      justify-content: space-between;
+      padding: 4px 0;
+      border-bottom: 1px solid #2a2a2a;
+    }
+    .detail-label { color: #888; }
+    .detail-value { color: #ddd; }
+    .detail-value.up { color: #ff4d4d; }
+    .detail-value.down { color: #4dff4d; }
+    
+    .source-tag {
+      position: absolute;
+      top: 8px;
+      right: 32px;
+      font-size: 10px;
+      color: #666;
+      padding: 2px 6px;
+      background: #2a2a2a;
+      border-radius: 4px;
+    }
+    
+    .chart-container {
+      height: 200px;
+      margin-top: 12px;
+      border-top: 1px solid #333;
+      padding-top: 8px;
+    }
+    
+    .empty {
+      text-align: center;
+      padding: 60px 20px;
+      color: #666;
+    }
+    
+    .loading {
+      color: #888;
+      font-size: 14px;
+    }
+    
+    @media (max-width: 480px) {
+      body { padding: 8px; }
+      .price { font-size: 28px; }
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <h1>📈 股票看板</h1>
+  
+  <div class="search-bar">
+    <input type="text" id="searchInput" placeholder="输入代码，如 sh600519 / AAPL" />
+    <button onclick="addStock()">添加</button>
+  </div>
+  <div class="hint">A股格式：sh600519 / sz000001 | 美股：AAPL / TSLA</div>
+  
+  <div class="grid" id="grid">
+    <div class="empty">暂无自选股，输入代码开始追踪</div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
