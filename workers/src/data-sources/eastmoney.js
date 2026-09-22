@@ -1,4 +1,8 @@
 // 东方财富数据源（A股主数据源）
+// 官方接口参考：
+// 实时行情 https://push2.eastmoney.com/api/qt/stock/get
+// 历史K线 https://push2his.eastmoney.com/api/qt/stock/kline/get
+// 价格类字段以「分」为单位，需要除以100还原为「元」
 
 function codeToSecid(code) {
   // 转换代码格式：sh600519 -> 1.600519, sz000001 -> 0.000001
@@ -10,7 +14,7 @@ function codeToSecid(code) {
 export async function fetchQuote(code) {
   const secid = codeToSecid(code)
 
-  // 用逗号分隔的 secids 支持批量
+  // secids 支持逗号分隔批量请求，这里单只股票直接传一个
   const url = `https://push2.eastmoney.com/api/qt/stock/get?secids=${secid}&fields=f43,f44,f45,f46,f47,f48,f50,f51,f52,f57,f58,f60,f116,f117,f162,f167,f168,f169,f170,f171`
 
   const response = await fetch(url, {

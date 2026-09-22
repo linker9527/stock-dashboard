@@ -50,7 +50,6 @@ async function fetchAStockQuote(code) {
       try {
         const data = await fetchSinaQuote(code)
         data.source = 'sina'
-        data.stale = false
         return data
       } catch (e2) {
         throw new Error(`Both sources failed: ${e1.message} / ${e2.message}`)
