@@ -231,7 +231,9 @@ function drawChart(container, klineData) {
   const prices = data.flatMap(k => [k.high, k.low]);
   const minPrice = Math.min(...prices);
   const maxPrice = Math.max(...prices);
-  const priceRange = maxPrice - minPrice || 1;
+  // 停牌股/横盘时 max==min，价差为 0。不能 fallback 到绝对值 1：
+  // 那会让 340 元的股票渲染成一条贴底的线。改用价格的 0.5% 作为最小价差。
+  const priceRange = maxPrice - minPrice || Math.abs(minPrice) * 0.005 || 1;
   
   const padding = 10;
   const chartHeight = height - padding * 2;

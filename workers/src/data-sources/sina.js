@@ -24,19 +24,23 @@ export async function fetchQuote(code) {
   }
 
   const parts = match[1].split(',')
-  
+
+  // 新浪接口直接返回「元」单位，不用换算
+  const price = parseFloat(parts[3])
+  const prevClose = parseFloat(parts[2])
+
   return {
     code: code,
     name: parts[0],
-    price: parseFloat(parts[3]),
-    change: parseFloat(parts[3]) - parseFloat(parts[2]),
-    changePercent: ((parseFloat(parts[3]) - parseFloat(parts[2])) / parseFloat(parts[2])) * 100,
+    price: price,
+    change: price - prevClose,
+    changePercent: prevClose > 0 ? ((price - prevClose) / prevClose) * 100 : 0,
     high: parseFloat(parts[4]),
     low: parseFloat(parts[5]),
     open: parseFloat(parts[1]),
-    prevClose: parseFloat(parts[2]),
+    prevClose: prevClose,
     volume: parseInt(parts[8]),
-    turnover: parseInt(parts[9]),
+    turnover: parseFloat(parts[9]),
     bid1: parseFloat(parts[11]),
     ask1: parseFloat(parts[21]),
     // 新浪接口没有市值、PE、PB数据

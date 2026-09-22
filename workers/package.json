@@ -3,10 +3,13 @@
   "version": "1.0.0",
   "description": "Stock dashboard API with primary/backup data sources",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "tail": "wrangler tail"
+    "tail": "wrangler tail",
+    "test": "node ../test/e2e.test.mjs",
+    "test:degradation": "node ../test/degradation.test.mjs"
   },
   "devDependencies": {
     "wrangler": "^3.0.0"

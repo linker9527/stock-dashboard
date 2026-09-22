@@ -2,6 +2,8 @@
 
 name = "stock-dashboard-api"
 main = "src/index.js"
+# 代码使用 import/export，需显式声明 ES 模块格式
+module_format = "ESMODULES"
 compatibility_date = "2024-01-01"
 
 # Workers 部署后会得到形如:
