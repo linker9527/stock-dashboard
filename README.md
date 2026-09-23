@@ -54,12 +54,22 @@
 - A股：PE 在 `p[52]`，市净率在 `p[46]`
 - 美股：`p[46]` 是英文全名，PE 在 `p[39]`，没有 PB，`p[48]`/`p[49]` 是 52 周高低
 
-**6. 单位换算**
-- 腾讯 A股成交额单位是「万元」，成交量是「手」（1手=100股）
-- 美股成交额是美元，成交量是股
-- 代码里已统一换算为「元」和「股」
+**6. A股降级名称乱码（新浪 GB18030 / 腾讯 GBK）**
+- 新浪 `charset=GB18030`，腾讯 `GBK`，而 `fetch` 的 `response.text()` 固定按 UTF-8 解码，降级后名称变成 U+FFFD 乱码
+- **不要试图解码 GBK**：CF Workers 的 `TextDecoder` 只支持 UTF-8（官方文档明确写 "represents a UTF-8 decoder"）。`new TextDecoder('gbk')` 本地 Node 能跑通，部署到 CF 必然崩——典型的"本地过线上崩"
+- **解法：换接口，不解码**。新浪/腾讯降级时不返回中文名（腾讯返回 `name: null`，美股/港股用 `p[46]` 英文名，实测 hk00700 → `TENCENT`），路由层用东财搜索接口补名，该接口返回 UTF-8 中文：
+  `GET https://searchapi.eastmoney.com/api/suggest/get?input=600519&type=14&token=D43BF722C8E3FBAFAFD3C795D0F0FC45`
+- 实测 `600519`→贵州茅台(mkt=1)、`000001`→平安银行(mkt=0)、`300750`→宁德时代(mkt=0)；mkt 映射 `1`→sh、`0`→sz、`116`→hk
+- 匹配必须同时比代码和市场号，`600519` 与 `00519` 这类跨市场同号不能混
+- 补名失败静默，名称留空由前端兜底显示代码，不影响行情返回
+- **判断是否乱码不能只判空**：新浪降级返回的是**非空**乱码字符串，`if (name && name.length > 0) return` 会直接漏过。检测规则：出现 U+FFFD → 必然乱码；只放行 ASCII 可打印（英文名）和 CJK 基本汉字区 0x4E00–0x9FFF（中文名），其它高位字符一律当乱码，宁可补全也不留乱码
 
-**7. JSON 序列化会丢弃数组上的自定义属性**
+**7. 单位换算**
+- 腾讯 A股成交额单位是「万元」，成交量是「手」（1手=100股）；美股成交额是美元，成交量是股
+- **东财量单位随市场变**：A股 f47/f56 是「手」(×100 换算为股)，港股是「股」(×1)。实测依据 hk00700：quote f47=22309793 与 K线 f56=22309793 数值相同，若按「手」解读则单日 22 亿股，远超腾讯控股流通盘，不成立
+- 代码统一走 `volumeFactor(market)` 函数，改动时注意同步
+
+**8. JSON 序列化会丢弃数组上的自定义属性**
 - `rows.source = 'eastmoney'` 后，`JSON.stringify(rows)` 不会输出 source（数组只序列化数值索引）
 - 所以 K线的 source 必须由路由层显式取出写进响应体，行情接口不受影响（source 挂在普通对象上）
 
@@ -75,7 +85,7 @@ stock-dashboard/
 │   │       ├── sina.js           # 新浪（A股备）
 │   │       └── tencent.js        # 腾讯（美股主 / A股兜底）
 │   ├── wrangler.toml
-│   └── package.json              # 含 "type": "module"，配合 wrangler 的 ESMODULES
+│   └── package.json              # 含 "type": "module"（ESM 由 export default 自动探测，wrangler.toml 不需要 module_format）
 ├── frontend/                     # Cloudflare Pages（前端页面）
 │   ├── index.html
 │   └── app.js

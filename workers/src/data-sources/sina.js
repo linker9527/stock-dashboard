@@ -1,10 +1,12 @@
+import { fetchTimeout } from '../http.js'
+
 // 新浪财经数据源（A股备用数据源）
 
 export async function fetchQuote(code) {
   // 新浪接口格式：sh600519
   const url = `https://hq.sinajs.cn/list=${code}`
 
-  const response = await fetch(url, {
+  const response = await fetchTimeout(url, {
     headers: {
       'User-Agent': 'Mozilla/5.0',
       'Referer': 'https://finance.sina.com.cn'
@@ -56,7 +58,12 @@ export async function fetchKline(code, period = 'day', count = 100) {
   const scale = period === 'day' ? 240 : period === 'week' ? 1200 : 5
   const url = `https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol=${code}&type=${scale}&datalen=${count}`
 
-  const response = await fetch(url)
+  const response = await fetchTimeout(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0',
+      'Referer': 'https://finance.sina.com.cn'
+    }
+  })
   const data = await response.json()
 
   if (!Array.isArray(data) || data.length === 0) {

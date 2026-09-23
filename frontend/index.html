@@ -47,6 +47,47 @@
     .search-bar .remove { background: #d94a4a; }
     .search-bar .remove:hover { background: #c43a3a; }
     
+    /* 搜索建议下拉 */
+    .search-wrap { position: relative; flex: 1; }
+    .search-suggest {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      background: #2a2a2a;
+      border: 1px solid #444;
+      border-top: none;
+      border-radius: 0 0 6px 6px;
+      max-height: 240px;
+      overflow-y: auto;
+      display: none;
+      z-index: 100;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    }
+    .search-suggest.show { display: block; }
+    .suggest-item {
+      padding: 8px 12px;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid #222;
+      font-size: 13px;
+    }
+    .suggest-item:last-child { border-bottom: none; }
+    .suggest-item:hover,
+    .suggest-item.active { background: #3a3a3a; }
+    .suggest-name { color: #fff; }
+    .suggest-code { color: #888; font-family: monospace; font-size: 12px; }
+    .suggest-market {
+      font-size: 10px;
+      color: #666;
+      background: #222;
+      padding: 1px 6px;
+      border-radius: 3px;
+      margin-left: 8px;
+    }
+    
     .hint {
       text-align: center;
       color: #666;
@@ -172,10 +213,13 @@
   <h1>📈 股票看板</h1>
   
   <div class="search-bar">
-    <input type="text" id="searchInput" placeholder="输入代码，如 sh600519 / AAPL" />
+    <div class="search-wrap">
+      <input type="text" id="searchInput" placeholder="输入名称、代码或拼音，如 茅台 / 600519 / AAPL" autocomplete="off" />
+      <div class="search-suggest" id="searchSuggest"></div>
+    </div>
     <button onclick="addStock()">添加</button>
   </div>
-  <div class="hint">A股格式：sh600519 / sz000001 | 美股：AAPL / TSLA</div>
+  <div class="hint">支持中文 / 英文 / 代码：茅台 / 平安银行 / AAPL / sh600519 | 港股：腾讯 / 00700</div>
   
   <div class="grid" id="grid">
     <div class="empty">暂无自选股，输入代码开始追踪</div>
