@@ -53,7 +53,7 @@ export async function fetchAQuote(code) {
 
 // 美股实时行情（不带后缀！）
 export async function fetchUSQuote(symbol) {
-  const clean = symbol.toUpperCase().replace(/\.(OQ|N|P)$/, '')
+  const clean = symbol.toUpperCase().replace(/\.(OQ|N|AM|P)$/, '')
   const text = await raw(`https://qt.gtimg.cn/q=us${clean}`)
   const m = text.match(/"(.+)"/)
   if (!m) throw new Error('Tencent US: empty response')
@@ -136,14 +136,40 @@ export async function fetchAKline(code, period = 'day', count = 100) {
 }
 
 // 美股K线（kline 接口，必须带后缀 + 起止日期）
+// 后缀 = 交易所标识，带错后缀接口仍返回 code:0 但只有 1 根 K线（静默残缺，比报错更糟）：
+//   105 纳斯达克 → .OQ   106 纽交所 → .N   107 NYSE Arca/Amex → .AM
+//   实测：JPM/BAC 用 .OQ 只回当天 1 根，换 .N 回完整多日；SPY/VOO/DIA 用 .AM 才完整。
+// 后缀基本不变（换交易所是极小概率事件），按代码缓存一次即可。
+// 查不到后缀说明代码本身有问题，直接抛错让路由层降级 Yahoo，绝不静默拿残缺数据。
+const usSuffixCache = new Map()   // 'JPM' -> '.N'
+
+async function resolveUSSuffix(clean) {
+  const hit = usSuffixCache.get(clean)
+  if (hit) return hit
+  // 腾讯实时行情的 p[2] 带交易所后缀（实测 usSPY → "SPY.AM"，usJPM → "JPM.N"）
+  const text = await raw(`https://qt.gtimg.cn/q=us${clean}`)
+  const m = text.match(/"(.+)"/)
+  if (!m) throw new Error(`Tencent US: empty response for ${clean}`)
+  const listed = String(m[1].split('~')[2] || '').toUpperCase()
+  const suffix = listed.match(/\.(OQ|N|AM|P)$/)
+  if (!suffix) {
+    throw new Error(`Tencent US: unknown exchange for ${clean} (p[2]="${listed}")`)
+  }
+  usSuffixCache.set(clean, suffix[0])
+  return suffix[0]
+}
+
 // 实测结论：美股支持 day / week / 60 / 5，但分钟周期的日期窗口被服务端忽略，
 //   无论传多宽的区间都只返回当天 1 根 K 线，无法用于画图。
 //   所以分钟周期同样直接抛错，由调用方降级到 Yahoo。
 // 返回: [日期, 开, 收, 高, 低, 量(股)]
 export async function fetchUSKline(symbol, period = 'day', count = 100) {
   const type = mapPeriod(period)
-  const clean = symbol.toUpperCase().replace(/\.(OQ|N|P)$/, '')
-  const fullCode = `us${clean}.OQ`
+  const upper = symbol.toUpperCase()
+  const given = upper.match(/\.(OQ|N|AM|P)$/)
+  const clean = upper.replace(/\.(OQ|N|AM|P)$/, '')
+  // 调用方显式带后缀（如直接传 JPM.N）就尊重它；否则查实时行情确定交易所
+  const fullCode = `us${clean}${given ? given[0] : await resolveUSSuffix(clean)}`
   const end = new Date().toISOString().slice(0, 10)
   const start = new Date(Date.now() - (type === 'week' ? 1500 : 900) * 864e5)
     .toISOString().slice(0, 10)
@@ -159,6 +185,11 @@ export async function fetchUSKline(symbol, period = 'day', count = 100) {
 
   const rows = (node[type] || []).slice(-count)
   if (!rows.length) throw new Error('Tencent US kline: empty')
+  // 防御：后缀对了却只回 1 根 = 数据不可信（正是带错后缀时的症状），
+  // 抛错降级 Yahoo；Yahoo 对新股照样回真实短历史，不会错杀。
+  if (rows.length < 2 && count >= 5) {
+    throw new Error(`Tencent US kline: suspicious partial data (${rows.length} row) for ${fullCode}`)
+  }
   return toRows(rows)
 }
 

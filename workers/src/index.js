@@ -101,14 +101,22 @@ async function fillNameIfMissing(quote) {
   if (!isGarbledName(quote.name)) return quote
 
   const name = await resolveANameByCode(quote.code)
-  return name ? { ...quote, name } : quote
+  // 补名失败也要把乱码清掉（置 null）：乱码是非空字符串，会让前端
+  // `d.name || code` 兜底失效，乱码直达页面（NEW-3）。
+  // 置 null 后前端显示代码，符合 README 设计意图。
+  return { ...quote, name: name || null }
 }
 
 // 代码白名单校验：code 会被拼进上游 URL，必须挡掉非法字符，否则可注入上游 query
 function normalizeAStockCode(code) {
   const raw = String(code).toLowerCase()
   if (/^(sh|sz)\d{6}$/.test(raw)) return raw
-  if (/^\d{6}$/.test(raw)) return (/^(6|9|5)/.test(raw) ? 'sh' : 'sz') + raw
+  if (/^bj\d{6}$/.test(raw)) return null   // 北交所不支持，显式拒绝
+  if (/^\d{6}$/.test(raw)) {
+    // 北交所号段（4/8/920 开头）同样显式拒绝，而不是静默归到深市然后查不到（NEW-12）
+    if (/^(4|8|920)/.test(raw)) return null
+    return (/^(6|9|5)/.test(raw) ? 'sh' : 'sz') + raw
+  }
   return null
 }
 
@@ -123,6 +131,17 @@ function normalizeHKCode(code) {
   return /^\d{4,5}$/.test(raw) ? 'hk' + raw : null
 }
 
+// 代码分流：A股(sh/sz前缀或6位数字) / 港股(hk前缀或裸4-5位数字) / 美股(其余字母)
+// 裸 5 位 "00700" 是港股常见写法，页面提示词也这么教，必须认（NEW-11）
+function classifyCode(code) {
+  const aCode = normalizeAStockCode(code)
+  if (aCode) return { aCode }
+  if (/^hk/i.test(code) || /^\d{4,5}$/.test(String(code).trim())) {
+    return { hkCode: normalizeHKCode(code) }
+  }
+  return { usCode: normalizeUSCode(code) }
+}
+
 // count 限幅，避免 lmt=-5 / lmt=99999999 透传到上游
 function clampCount(v, fallback = 100) {
   const n = parseInt(v, 10)
@@ -133,34 +152,48 @@ function clampCount(v, fallback = 100) {
 // 缓存层：同一个请求 3 秒内不重复打外部接口，避免高频刷新被限流
 const cache = new Map()
 const CACHE_TTL = 3000 // 3秒
+const inflight = new Map() // key -> 进行中的 Promise
 
 async function getCached(key, fetchFn) {
   const now = Date.now()
   const cached = cache.get(key)
-  
+
   if (cached && now - cached.time < CACHE_TTL) {
     return { data: cached.data, fromCache: true }
   }
 
-  try {
-    const data = await fetchFn()
-    cache.set(key, { data, time: now })
-    
-    // 清理过期缓存
-    if (cache.size > 1000) {
-      for (const [k, v] of cache.entries()) {
-        if (now - v.time > 30000) cache.delete(k)
+  // in-flight 去重：并发同 key 请求共享同一个上游 Promise，
+  // 否则首屏 render + 全局轮询 + visibilitychange 撞窗口时会重复打上游（NEW-7）
+  const pending = inflight.get(key)
+  if (pending) return pending
+
+  const p = (async () => {
+    try {
+      const data = await fetchFn()
+      cache.set(key, { data, time: Date.now() })
+
+      // 清理过期缓存
+      if (cache.size > 1000) {
+        const t = Date.now()
+        for (const [k, v] of cache.entries()) {
+          if (t - v.time > 30000) cache.delete(k)
+        }
       }
+
+      return { data, fromCache: false }
+    } catch (e) {
+      // 主备都失败时返回旧缓存
+      if (cached) {
+        return { data: cached.data, fromCache: true, stale: true }
+      }
+      throw e
+    } finally {
+      inflight.delete(key)
     }
-    
-    return { data, fromCache: false }
-  } catch (e) {
-    // 主备都失败时返回旧缓存
-    if (cached) {
-      return { data: cached.data, fromCache: true, stale: true }
-    }
-    throw e
-  }
+  })()
+
+  inflight.set(key, p)
+  return p
 }
 
 // A股查询：主东财 → 备新浪 → 兜底腾讯
@@ -170,30 +203,31 @@ async function fetchAStockQuote(code) {
   return getCached(cacheKey, async () => {
     // 按优先级依次尝试，记录每个源的错误便于排查
     const attempts = []
+    let data = null
 
     try {
-      const data = await fetchEastmoneyQuote(code)
+      data = await fetchEastmoneyQuote(code)
       data.source = 'eastmoney'
-      return data
     } catch (e) {
       attempts.push(`eastmoney: ${e.message}`)
+      try {
+        data = await fetchSinaQuote(code)
+        data.source = 'sina'
+      } catch (e2) {
+        attempts.push(`sina: ${e2.message}`)
+        try {
+          data = await fetchTencentAQuote(code)
+        } catch (e3) {
+          attempts.push(`tencent: ${e3.message}`)
+        }
+      }
     }
 
-    try {
-      const data = await fetchSinaQuote(code)
-      data.source = 'sina'
-      return data
-    } catch (e) {
-      attempts.push(`sina: ${e.message}`)
-    }
+    if (!data) throw new Error(`All sources failed | ${attempts.join(' | ')}`)
 
-    try {
-      return await fetchTencentAQuote(code)
-    } catch (e) {
-      attempts.push(`tencent: ${e.message}`)
-    }
-
-    throw new Error(`All sources failed | ${attempts.join(' | ')}`)
+    // 降级源（新浪/腾讯）的 A股中文名是 GBK 乱码，在这里补成 UTF-8 名后
+    // 才入缓存——补全结果一起缓存，TTL 内不再重复打 searchapi（NEW-3）
+    return await fillNameIfMissing(data)
   })
 }
 
@@ -205,23 +239,22 @@ async function fetchHKStockQuote(code) {
 
   return getCached(cacheKey, async () => {
     const attempts = []
+    let data = null
 
     try {
-      const data = await fetchEastmoneyQuote(code)
+      data = await fetchEastmoneyQuote(code)
       data.source = 'eastmoney'
-      return data
     } catch (e) {
       attempts.push(`eastmoney: ${e.message}`)
+      try {
+        data = await fetchTencentHKQuote(code)
+      } catch (e2) {
+        attempts.push(`tencent: ${e2.message}`)
+      }
     }
 
-    try {
-      const data = await fetchTencentHKQuote(code)
-      return data
-    } catch (e) {
-      attempts.push(`tencent: ${e.message}`)
-    }
-
-    throw new Error(`HK quote failed | ${attempts.join(' | ')}`)
+    if (!data) throw new Error(`HK quote failed | ${attempts.join(' | ')}`)
+    return await fillNameIfMissing(data)
   })
 }
 
@@ -379,8 +412,11 @@ async function fetchUSKline(symbol, period, count) {
 // 注意：Yahoo 返回的数组里可能有 null，且 slice+indexOf 组合会错乱，
 // 这里改为先取最后 N 个索引，再按原索引对齐取 OHLC
 async function fetchYahooKline(symbol, period, count) {
-  const range = period === 'day' ? '6mo' : period === 'week' ? '2y' : '5d'
-  const interval = period === 'day' ? '1d' : period === 'week' ? '1wk' : '5m'
+  // period 已在路由层过白名单（day/week/min5/min60）
+  const rangeMap = { day: '6mo', week: '2y', min5: '5d', min60: '1mo' }
+  const intMap = { day: '1d', week: '1wk', min5: '5m', min60: '60m' }
+  const range = rangeMap[period] || '6mo'
+  const interval = intMap[period] || '1d'
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?range=${range}&interval=${interval}`
 
   const response = await fetchWithTimeout(url, {
@@ -452,22 +488,24 @@ export default {
         const rawItems = data.QuotationCodeTable?.Data || []
 
         // market -> 前缀，统一转成本项目使用的代码格式
-        // 1=沪市(sh) 0=深市(sz) 105=纳斯达克(us) 106=纽交所(us) 116=港股(hk)
-        const prefixMap = { '1': 'sh', '0': 'sz', '105': '', '106': '', '116': 'hk' }
+        // 1=沪市(sh) 0=深市(sz) 105=纳斯达克(us) 106=纽交所(us) 107=NYSE Arca/Amex(us) 116=港股(hk)
+        const prefixMap = { '1': 'sh', '0': 'sz', '105': '', '106': '', '107': '', '116': 'hk' }
 
         const items = rawItems.map(item => {
           const mkt = String(item.MktNum)
           const rawCode = item.Code
           // A股和港股用 sh/sz/hk 前缀，美股直接用原始代码
-          let prefix = prefixMap[mkt]
-          if (prefix === undefined) prefix = 'sh'
+          const prefix = prefixMap[mkt]
+          // 未知市场（伦敦 155 等）直接丢弃：曾经默认套 sh，
+          // 把 Arca ETF 变成 shspy、把海外票变成 shbrk 这种垃圾代码（NEW-2）
+          if (prefix === undefined) return null
           return {
             code: prefix ? prefix + rawCode.toLowerCase() : rawCode,
             name: item.Name,
             market: mkt,
             rawCode: rawCode
           }
-        }).filter(x => x.name && x.code)
+        }).filter(x => x && x.name && x.code)
 
         return new Response(JSON.stringify({ success: true, data: items.slice(0, 10) }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json; charset=utf-8' }
@@ -490,17 +528,8 @@ export default {
       }
 
       try {
-        // 按市场分流：A股(sh/sz) / 港股(hk) / 美股(其余)
-        let aCode = normalizeAStockCode(code)
-        let hkCode = null
-        let usCode = null
-        if (aCode) {
-          aCode = aCode
-        } else if (/^hk/i.test(code)) {
-          hkCode = normalizeHKCode(code)
-        } else {
-          usCode = normalizeUSCode(code)
-        }
+        // 按市场分流：A股(sh/sz/6位) / 港股(hk前缀或裸4-5位) / 美股(其余)
+        const { aCode, hkCode, usCode } = classifyCode(code)
 
         if (!aCode && !hkCode && !usCode) {
           return new Response(JSON.stringify({
@@ -510,12 +539,10 @@ export default {
 
         let result
         if (aCode) {
+          // 名称补全已挪进 fetchAStockQuote 的 fetchFn，补全结果随缓存一起存（NEW-3）
           result = await fetchAStockQuote(aCode)
-          // 备用源（新浪/腾讯）返回的中文名是 GBK 乱码，降级时补全为 UTF-8 中文
-          result.data = await fillNameIfMissing(result.data)
         } else if (hkCode) {
           result = await fetchHKStockQuote(hkCode)
-          result.data = await fillNameIfMissing(result.data)
         } else {
           result = await fetchUSQuote(usCode)
         }
@@ -548,10 +575,17 @@ export default {
         })
       }
 
+      // period 白名单：非法值（拼错的 weekly、任意垃圾）曾经静默落进 5 分钟分支，
+      // 返回错周期数据还标记成功（NEW-5）
+      const VALID_PERIODS = new Set(['day', 'week', 'min5', 'min60'])
+      if (!VALID_PERIODS.has(period)) {
+        return new Response(JSON.stringify({
+          error: `Invalid period "${period}". Use day / week / min5 / min60`
+        }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json; charset=utf-8' } })
+      }
+
       try {
-        const aCode = normalizeAStockCode(code)
-        const hkCode = /^hk/i.test(code) ? normalizeHKCode(code) : null
-        const usCode = (!aCode && !hkCode) ? normalizeUSCode(code) : null
+        const { aCode, hkCode, usCode } = classifyCode(code)
 
         if (!aCode && !hkCode && !usCode) {
           return new Response(JSON.stringify({
@@ -574,7 +608,8 @@ export default {
           success: true,
           data: result.data,
           source: (result.data && result.data.source) || null,
-          fromCache: result.fromCache
+          fromCache: result.fromCache,
+          stale: result.stale || false   // 对齐 quote 接口：全源失败返回旧 K线时前端能给"旧"提示（NEW-6）
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json; charset=utf-8' }
         })

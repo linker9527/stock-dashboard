@@ -84,8 +84,11 @@ export async function fetchKline(code, period = 'day', count = 100) {
   if (!parsed) throw new Error(`Eastmoney Kline: invalid code "${code}"`)
   const secid = parsed.secid
 
-  // K线接口参数是 secid（单数），klt: 101=日K 102=周K 5=5分钟
-  const klt = period === 'day' ? 101 : period === 'week' ? 102 : 5
+  // K线接口参数是 secid（单数），klt: 101=日K 102=周K 5=5分钟 60=60分钟
+  // period 有路由层白名单兜底，这里显式映射，拿不到就抛错而不是静默落 5 分钟（NEW-5）
+  const kltMap = { day: 101, week: 102, min5: 5, min60: 60 }
+  const klt = kltMap[period]
+  if (klt === undefined) throw new Error(`Eastmoney kline: unsupported period "${period}"`)
   const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${secid}&klt=${klt}&fqt=1&lmt=${count}&end=20500101&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58`
 
   const response = await fetchTimeout(url, {
@@ -94,6 +97,9 @@ export async function fetchKline(code, period = 'day', count = 100) {
       'Referer': 'https://quote.eastmoney.com/'
     }
   })
+  // 非 200 直接抛 HTTP 状态：否则 RST/劫持页会在 .json() 处抛 SyntaxError，
+  // 虽然仍能触发降级，但排查信息被误导（NEW-13）
+  if (!response.ok) throw new Error(`Eastmoney Kline HTTP ${response.status}`)
   const data = await response.json()
 
   if (!data.data || !data.data.klines) {

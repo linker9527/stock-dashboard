@@ -54,8 +54,11 @@ export async function fetchQuote(code) {
 }
 
 export async function fetchKline(code, period = 'day', count = 100) {
-  // 新浪K线接口
-  const scale = period === 'day' ? 240 : period === 'week' ? 1200 : 5
+  // 新浪K线接口，scale 是分钟数：240=日 1200=周 5=5分钟 60=60分钟
+  // period 有路由层白名单兜底，这里显式映射（NEW-5）
+  const scaleMap = { day: 240, week: 1200, min5: 5, min60: 60 }
+  const scale = scaleMap[period]
+  if (scale === undefined) throw new Error(`Sina kline: unsupported period "${period}"`)
   const url = `https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol=${code}&type=${scale}&datalen=${count}`
 
   const response = await fetchTimeout(url, {

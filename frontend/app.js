@@ -15,7 +15,6 @@ const STORAGE_KEY = 'stock_watchlist';
 const POLL_INTERVAL = 5000; // 5秒刷新一次
 
 let watchlist = [];
-let refreshTimers = [];   // 只放「卡片级」定时器，全局轮询不在此列
 let globalTimer = null;   // 全局 5 秒轮询，初始化时注册一次，不随 render 重建
 
 // ========== 数据源元信息 ==========
@@ -70,7 +69,8 @@ let searchTimer = null;   // 输入防抖
 function isDefiniteCode(s) {
   const t = s.trim();
   if (!t) return false;
-  return /^(sh|sz|hk)\d{4,6}$/i.test(t) || /^\d{6}$/.test(t);
+  // 裸 6 位 = A股；裸 4-5 位 = 港股（00700 是常见写法，NEW-11）
+  return /^(sh|sz|hk)\d{4,6}$/i.test(t) || /^\d{4,6}$/.test(t);
 }
 
 // 输入是否像代码（是则直接加，不搜索）
@@ -85,13 +85,18 @@ function normalizeCode(input) {
   let code = input.trim().toLowerCase();
   if (/^(sh|sz|hk)\d{4,6}$/.test(code)) return code;
   if (/^\d{6}$/.test(code)) {
+    // 北交所号段（4/8/920 开头）不支持：原样透传让后端显式报错，
+    // 而不是归到深市静默查不到（NEW-12）
+    if (/^(4|8|920)/.test(code)) return code;
     return (/^(5|6|9)/.test(code) ? 'sh' : 'sz') + code;
   }
+  // 裸 4-5 位数字 = 港股，补 hk 前缀并补足 5 位（700 -> hk00700）
+  if (/^\d{4,5}$/.test(code)) return 'hk' + code.padStart(5, '0');
   return code;
 }
 
 // 市场标签（用于下拉显示）
-const MARKET_LABEL = { '1': '沪市', '0': '深市', '105': '纳斯达克', '106': '纽交所', '116': '港股' };
+const MARKET_LABEL = { '1': '沪市', '0': '深市', '105': '纳斯达克', '106': '纽交所', '107': 'Arca/ETF', '116': '港股' };
 
 async function addStock() {
   const input = document.getElementById('searchInput');
@@ -301,16 +306,12 @@ function bindSearch() {
 
 function render() {
   const grid = document.getElementById('grid');
-  
-  // 清理旧定时器
-  refreshTimers.forEach(t => clearInterval(t));
-  refreshTimers = [];
-  
+
   if (watchlist.length === 0) {
     grid.innerHTML = '<div class="empty">暂无自选股，输入代码开始追踪</div>';
     return;
   }
-  
+
   grid.innerHTML = watchlist.map(code => `
     <div class="card" id="card-${code}">
       <div class="source-tag" id="source-${code}">加载中</div>
@@ -319,7 +320,7 @@ function render() {
           <span class="card-title" id="name-${code}">--</span>
           <span class="card-code">${code}</span>
         </div>
-        <button class="close-btn" onclick="removeStock('${code}')">×</button>
+        <button class="close-btn" data-code="${code}">×</button>
       </div>
       <div class="price-area">
         <div class="price flat" id="price-${code}">--</div>
@@ -335,6 +336,12 @@ function render() {
       <div class="chart-container" id="chart-${code}"></div>
     </div>
   `).join('');
+
+  // 删除按钮用 data-code + addEventListener，不用内联 onclick：
+  // 内联拼接可注入（分享密钥可携带恶意 code，NEW-10）
+  grid.querySelectorAll('.close-btn').forEach(btn => {
+    btn.addEventListener('click', () => removeStock(btn.dataset.code));
+  });
   
   // 异步加载数据
   // 卡片是刚重建的（innerHTML 已清空），所以这次 loadChart 必须强刷，
@@ -492,6 +499,9 @@ async function loadChart(code, force = false) {
 
   const now = Date.now();
   if (!force && CHART_CACHE[code] && now - CHART_CACHE[code] < KLINE_INTERVAL) return;
+  // 失败也记录尝试时间：之前只在成功时写，持续失败的股票会每 5 秒白打一次
+  // 上游（一天约 1.7 万请求），还会加剧东财的 IP 限流（NEW-8）
+  CHART_CACHE[code] = now;
 
   try {
     const json = await fetchKline(code);
@@ -499,8 +509,7 @@ async function loadChart(code, force = false) {
     if (!data || !data.length) return;
 
     drawChart(container, data);
-    updateKlineTag(code, json.source);
-    CHART_CACHE[code] = Date.now();
+    updateKlineTag(code, json.source, json.stale);
   } catch (e) {
     // 失败不重建容器，避免每 5 秒闪一次"加载失败"
     if (!container.querySelector('canvas') && !container.querySelector('.loading')) {
@@ -510,8 +519,12 @@ async function loadChart(code, force = false) {
 }
 
 function drawChart(container, klineData) {
-  // 取最近30根K线
-  const data = klineData.slice(-30);
+  // 过滤无效 K线：Yahoo 兜底常见 null OHLC，Number(null)=0 会把 minPrice 拉到 0
+  // 压扁整图；parseFloat 失败的 NaN 则让 Math.min 得 NaN、整图空白（NEW-9）
+  const data = klineData
+    .filter(k => k && ['open', 'close', 'high', 'low'].every(f => Number.isFinite(k[f])))
+    .slice(-30);
+  if (!data.length) return;
   const width = container.clientWidth || 300;
   const height = 200;
   
@@ -585,11 +598,13 @@ function drawChart(container, klineData) {
 // 把 K 线实际数据源同步到卡片角标。
 // K 线和行情可能来自不同源（K线节流 60 秒、行情 5 秒，重试节奏不同），
 // 不同源时角标高亮，免得"图上价格 ≠ 卡片价格"却没有任何解释。
-function updateKlineTag(code, source) {
+function updateKlineTag(code, source, stale) {
   const el = document.getElementById(`ksrc-${code}`);
   if (!el) return;
   const degraded = !!source && source !== primarySourceOf(code);
-  el.textContent = sourceLabel(source, code);
+  let label = sourceLabel(source, code);
+  if (stale) label += '·旧';
+  el.textContent = label;
   el.className = 'kline-tag' + (degraded ? ' degraded' : '');
   el.title = degraded
     ? `K线主源不可用，已降级到 ${SOURCE_LABEL[source] || source}`
@@ -744,6 +759,16 @@ function importKey() {
   document.getElementById('importText').focus();
 }
 
+// 代码白名单：watchlist 里的 code 会被拼进 DOM id，必须是安全字符集。
+// 与后端 normalize*Code 的接受域对齐：sh/sz+6位、hk+4-5位、裸数字、美股 ticker。
+// 只允许 字母/数字/点/连字符 —— 引号、尖括号、空格等一律拒绝（NEW-10 防 XSS）
+function isSafeCode(code) {
+  return /^(sh|sz)\d{6}$/i.test(code)
+      || /^hk\d{4,5}$/i.test(code)
+      || /^\d{4,6}$/.test(code)
+      || /^[A-Za-z][A-Za-z.\-]{0,4}$/.test(code);
+}
+
 function doImport() {
   const text = document.getElementById('importText').value;
   if (!text.trim()) { flash('请先粘贴密钥'); return; }
@@ -754,14 +779,20 @@ function doImport() {
   const list = r.data.watchlist.filter(c => typeof c === 'string' && c.trim());
   if (!list.length) { flash('密钥里没有自选股'); return; }
 
+  // 逐个校验格式：密钥设计为可明文分享，恶意密钥可以塞入带引号的 code，
+  // 不校验就会经卡片模板形成注入（NEW-10）
+  const valid = list.filter(isSafeCode);
+  const dropped = list.length - valid.length;
+  if (!valid.length) { flash('密钥里的代码全部不合法，未导入'); return; }
+
   let added = 0;
-  for (const code of list) {
+  for (const code of valid) {
     if (!watchlist.includes(code)) { watchlist.push(code); added++; }
   }
   saveWatchlist();
   render();
   closeModal();
-  flash(`导入完成：${list.length} 只，新增 ${added} 只`);
+  flash(`导入完成：${valid.length} 只，新增 ${added} 只` + (dropped ? `，丢弃 ${dropped} 个非法代码` : ''));
 }
 
 // ========== 初始化 ==========
@@ -769,9 +800,8 @@ function doImport() {
 // 绑定搜索框（输入防抖搜索 + 键盘上下选择 + 回车添加）
 bindSearch();
 
-// 全局轮询：初始化时注册一次，绝不随 render() 清空
-// render() 会重建卡片并清理 refreshTimers（卡片级定时器），
-// 若把全局轮询也放进去，用户增删股票后轮询会静默停摆（BUG-1）
+// 全局轮询：初始化时注册一次，绝不随 render() 重建，
+// 否则用户增删股票后轮询会静默停摆（BUG-1）
 function startGlobalPolling() {
   if (globalTimer) clearInterval(globalTimer);
   globalTimer = setInterval(() => {
