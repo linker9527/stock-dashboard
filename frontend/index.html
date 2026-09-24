@@ -124,7 +124,11 @@
       margin-right: auto;
     }
     .search-bar input {
-      flex: 1;
+      /* width:100% 是必须的：input 是替换元素，默认只有约 20 字符宽，撑不满
+         所在的 .search-wrap，导致「添加」按钮离输入框右缘有几百像素空档；
+         同时建议下拉（left:0;right:0 贴在 .search-wrap 上）会比输入框宽一倍。
+         注意：这里写 flex:1 无效——父级 .search-wrap 不是 flex 容器。 */
+      width: 100%;
       padding: 10px 12px;
       border: 1px solid #444;
       border-radius: 6px;
