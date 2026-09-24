@@ -13,7 +13,107 @@
       min-height: 100vh;
       padding: 16px;
     }
-    h1 { text-align: center; margin-bottom: 16px; font-size: 22px; color: #fff; }
+    h1 { text-align: center; font-size: 22px; color: #fff; }
+    .top-bar {
+      position: relative;
+      max-width: 1400px;
+      margin: 0 auto 16px;
+      min-height: 26px;
+    }
+    .top-bar h1 { margin: 0; }
+    .top-bar .top-actions {
+      position: absolute;
+      top: 0;
+      right: 0;
+      display: flex;
+      gap: 6px;
+    }
+    .top-bar .top-actions button {
+      padding: 6px 12px;
+      background: #2a2a2a;
+      color: #bbb;
+      border: 1px solid #444;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .top-bar .top-actions button:hover { background: #4a90d9; color: #fff; border-color: #4a90d9; }
+    .top-bar .top-actions button:disabled { opacity: .55; cursor: wait; }
+
+    /* 导出/导入密钥弹窗 */
+    .modal-mask {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, .62);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+    .modal-mask.show { display: flex; }
+    .modal {
+      background: #252525;
+      border: 1px solid #444;
+      border-radius: 10px;
+      width: 560px;
+      max-width: 94vw;
+      max-height: 84vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 10px 36px rgba(0, 0, 0, .55);
+    }
+    .modal-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 16px;
+      border-bottom: 1px solid #333;
+      font-size: 15px;
+      font-weight: 600;
+      color: #fff;
+    }
+    .modal-body {
+      padding: 16px;
+      overflow-y: auto;
+      font-size: 13px;
+      line-height: 1.6;
+      color: #ccc;
+    }
+    .modal-body .hint-line { margin-bottom: 10px; }
+    .modal-body textarea {
+      width: 100%;
+      box-sizing: border-box;
+      min-height: 120px;
+      background: #1a1a1a;
+      color: #e0e0e0;
+      border: 1px solid #444;
+      border-radius: 6px;
+      padding: 10px;
+      font-family: ui-monospace, Menlo, Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      resize: vertical;
+      outline: none;
+    }
+    .modal-body textarea:focus { border-color: #669; }
+    .modal-foot {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .btn {
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      border: 1px solid #444;
+      background: #2a2a2a;
+      color: #ddd;
+    }
+    .btn:hover { background: #3a3a3a; }
+    .btn-primary { background: #4a90d9; color: #fff; border-color: #4a90d9; }
+    .btn-primary:hover { background: #3a7bc4; }
     
     .search-bar {
       display: flex;
@@ -181,14 +281,72 @@
       color: #666;
       padding: 2px 6px;
       background: #2a2a2a;
+      border: 1px solid transparent;
       border-radius: 4px;
     }
+    /* 非主源 = 降级数据，琥珀色高亮，不再静默 */
+    .source-tag.degraded {
+      color: #e0a33d;
+      background: #3a2c15;
+      border-color: #6b4d1d;
+    }
+    /* 离线 = 后端连不上，与降级是两码事，用红色区分 */
+    .source-tag.offline {
+      color: #ff9b9b;
+      background: #3a1a1a;
+      border-color: #7a3030;
+    }
+    .card.offline { opacity: .55; }
+    .card.offline .price { color: #888; }
+
+    /* 后端离线横幅：只有全部卡片都离线才显示 */
+    .offline-banner {
+      display: none;
+      max-width: 1400px;
+      margin: 0 auto 12px;
+      padding: 10px 16px;
+      background: #3a1a1a;
+      border: 1px solid #7a3030;
+      border-radius: 8px;
+      color: #ffb3b3;
+      font-size: 13px;
+      line-height: 1.6;
+      text-align: center;
+    }
+    .offline-banner.show { display: block; }
+    .offline-banner code {
+      background: #2a1212;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-family: ui-monospace, Menlo, Consolas, monospace;
+    }
     
-    .chart-container {
-      height: 200px;
+    .chart-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
       margin-top: 12px;
       border-top: 1px solid #333;
-      padding-top: 8px;
+      padding-top: 6px;
+      font-size: 11px;
+      color: #666;
+    }
+    .kline-tag {
+      font-size: 10px;
+      padding: 1px 6px;
+      background: #2a2a2a;
+      border: 1px solid transparent;
+      border-radius: 4px;
+      color: #777;
+    }
+    .kline-tag.degraded {
+      color: #e0a33d;
+      background: #3a2c15;
+      border-color: #6b4d1d;
+    }
+    .chart-container {
+      height: 200px;
+      margin-top: 4px;
     }
     
     .empty {
@@ -210,7 +368,14 @@
   </style>
 </head>
 <body>
-  <h1>📈 股票看板</h1>
+  <div class="top-bar">
+    <h1>📈 股票看板</h1>
+    <div class="top-actions">
+      <button id="retryKlineBtn" onclick="retryAllKlines()" title="绕过 60 秒节流，强制所有自选股重新拉取 K 线；主源恢复后下一次就会回到主源">↻ 重试K线</button>
+      <button onclick="exportKey()" title="把自选股编码成一段密钥，带到别的浏览器或设备">⤓ 导出</button>
+      <button onclick="importKey()" title="粘贴别处导出的密钥，恢复自选股">⤒ 导入</button>
+    </div>
+  </div>
   
   <div class="search-bar">
     <div class="search-wrap">
@@ -221,8 +386,22 @@
   </div>
   <div class="hint">支持中文 / 英文 / 代码：茅台 / 平安银行 / AAPL / sh600519 | 港股：腾讯 / 00700</div>
   
+  <!-- 后端离线横幅：只有全部卡片都离线才显示（个别失败可能是单股异常） -->
+  <div class="offline-banner" id="offlineBanner">⚠️ 后端离线，行情无法获取。请确认本地服务在跑（<code>node server.js</code> → http://127.0.0.1:8787 ），页面每 5 秒自动重试，恢复后会回到正常显示。</div>
+
   <div class="grid" id="grid">
     <div class="empty">暂无自选股，输入代码开始追踪</div>
+  </div>
+
+  <!-- 导出/导入密钥弹窗 -->
+  <div class="modal-mask" id="modalMask" onclick="closeModal()">
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-head">
+        <span id="modalTitle">标题</span>
+        <button class="close-btn" onclick="closeModal()">×</button>
+      </div>
+      <div class="modal-body" id="modalBody"></div>
+    </div>
   </div>
 
   <script src="app.js"></script>

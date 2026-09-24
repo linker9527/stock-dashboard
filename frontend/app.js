@@ -18,6 +18,27 @@ let watchlist = [];
 let refreshTimers = [];   // 只放「卡片级」定时器，全局轮询不在此列
 let globalTimer = null;   // 全局 5 秒轮询，初始化时注册一次，不随 render 重建
 
+// ========== 数据源元信息 ==========
+// 主源不可用会降级到备源，降级必须可见（角标高亮 + 说明哪些字段没了）
+const SOURCE_LABEL = { eastmoney: '东财', sina: '新浪', tencent: '腾讯', yahoo: 'Yahoo' };
+const PRIMARY_SOURCE = { a: 'eastmoney', hk: 'eastmoney', us: 'tencent' };
+
+function marketOf(code) {
+  const c = String(code).toLowerCase();
+  if (/^(sh|sz)/.test(c)) return 'a';
+  if (/^hk/.test(c)) return 'hk';
+  return 'us';
+}
+function primarySourceOf(code) {
+  return PRIMARY_SOURCE[marketOf(code)] || 'eastmoney';
+}
+// 主源直接显示名；备源加「·备源」后缀，一眼看出是降级
+function sourceLabel(source, code) {
+  const name = SOURCE_LABEL[source] || source || 'unknown';
+  if (!source) return name;
+  return source === primarySourceOf(code) ? name : name + '·备源';
+}
+
 // ========== 本地存储 ==========
 
 function loadWatchlist() {
@@ -169,7 +190,9 @@ async function fetchKline(code) {
     throw new Error(json.error || 'K线请求失败');
   }
   
-  return json.data;
+  // 后端把 K线数据源放在顶层 source（数组属性经 JSON 序列化会丢失），
+  // 所以返回整个 json，供 loadChart 把来源同步到卡片角标
+  return json;
 }
 
 // ========== 搜索 ==========
@@ -305,6 +328,10 @@ function render() {
       <div class="details" id="details-${code}">
         <div class="loading" style="grid-column: span 2; text-align:center;">加载中...</div>
       </div>
+      <div class="chart-bar">
+        <span>日K</span>
+        <span class="kline-tag" id="ksrc-${code}">K线加载中</span>
+      </div>
       <div class="chart-container" id="chart-${code}"></div>
     </div>
   `).join('');
@@ -374,24 +401,82 @@ async function loadCard(code) {
       `;
     }
     
-    // 更新数据源标签
+    // 更新数据源标签：非主源时琥珀色高亮，让降级可见（不再静默）
     const sourceEl = document.getElementById(`source-${code}`);
     if (sourceEl) {
-      let label = d.source || 'unknown';
-      if (result.stale) label += ' (旧)';
+      const primary = primarySourceOf(code);
+      const degraded = !!d.source && d.source !== primary;
+      let label = sourceLabel(d.source, code);
+      if (result.stale) label += '·旧';
       sourceEl.textContent = label;
+      sourceEl.className = 'source-tag' + (degraded ? ' degraded' : '');
+      sourceEl.title = degraded
+        ? `主源 ${SOURCE_LABEL[primary] || primary} 不可用，已降级到 ${SOURCE_LABEL[d.source] || d.source}。估值字段（市盈率/市净率/总市值）当前不可用。`
+        : `数据源：${SOURCE_LABEL[d.source] || d.source}`;
     }
     
     // 加载K线（60 秒节流，避免每 5 秒重拉 —— BUG-9）
     loadChart(code);
 
+    // 本次成功，清除离线标记
+    markOnline(code);
+
   } catch (e) {
-    const priceEl = document.getElementById(`price-${code}`);
-    if (priceEl) {
-      priceEl.textContent = '❌';
-      priceEl.title = e.message;
-    }
+    // 后端连不上 ≠ 降级。降级还有价，离线什么都没有；
+    // 之前只把价格换成 ❌，而详情/K线/来源角标全是上一次的旧值，
+    // 看起来像"某个字段没加载出来"，其实是整台后端没了。
+    markOffline(code, e.message);
   }
+}
+
+// 离线态（后端不可达）与降级态（有价但缺字段）必须在视觉上分开
+const CARD_STATUS = {};   // code -> 'ok' | 'offline'
+
+function markOffline(code, msg) {
+  CARD_STATUS[code] = 'offline';
+  const card = document.getElementById(`card-${code}`);
+  if (card) card.classList.add('offline');
+
+  const priceEl = document.getElementById(`price-${code}`);
+  if (priceEl) {
+    priceEl.textContent = '离线';
+    priceEl.className = 'price flat';
+    priceEl.title = '后端离线：' + msg;
+  }
+
+  const changeEl = document.getElementById(`change-${code}`);
+  if (changeEl) { changeEl.textContent = '--'; changeEl.className = 'change flat'; }
+
+  const detailsEl = document.getElementById(`details-${code}`);
+  if (detailsEl) {
+    detailsEl.innerHTML =
+      '<div class="detail-item"><span class="detail-label" style="grid-column:span 2;text-align:center;color:#ff9b9b;">行情获取失败，5 秒后自动重试</span></div>';
+  }
+
+  const sourceEl = document.getElementById(`source-${code}`);
+  if (sourceEl) {
+    sourceEl.textContent = '离线';
+    sourceEl.className = 'source-tag offline';
+    sourceEl.title = msg;
+  }
+
+  updateOfflineBanner();
+}
+
+function markOnline(code) {
+  CARD_STATUS[code] = 'ok';
+  const card = document.getElementById(`card-${code}`);
+  if (card) card.classList.remove('offline');
+  updateOfflineBanner();
+}
+
+// 只有「全部卡片都离线」才弹横幅 —— 个别失败可能是单股异常，全部失败才是后端没了
+function updateOfflineBanner() {
+  const banner = document.getElementById('offlineBanner');
+  if (!banner) return;
+  const total = watchlist.length;
+  const off = watchlist.filter(c => CARD_STATUS[c] === 'offline').length;
+  banner.classList.toggle('show', total > 0 && off === total);
 }
 
 const CHART_CACHE = {};          // code -> 最近一次成功拉取的时间戳
@@ -409,10 +494,12 @@ async function loadChart(code, force = false) {
   if (!force && CHART_CACHE[code] && now - CHART_CACHE[code] < KLINE_INTERVAL) return;
 
   try {
-    const data = await fetchKline(code);
+    const json = await fetchKline(code);
+    const data = json.data;
     if (!data || !data.length) return;
 
     drawChart(container, data);
+    updateKlineTag(code, json.source);
     CHART_CACHE[code] = Date.now();
   } catch (e) {
     // 失败不重建容器，避免每 5 秒闪一次"加载失败"
@@ -495,6 +582,38 @@ function drawChart(container, klineData) {
   ctx.fillText(lastClose.toFixed(2), 4, lastY - 4);
 }
 
+// 把 K 线实际数据源同步到卡片角标。
+// K 线和行情可能来自不同源（K线节流 60 秒、行情 5 秒，重试节奏不同），
+// 不同源时角标高亮，免得"图上价格 ≠ 卡片价格"却没有任何解释。
+function updateKlineTag(code, source) {
+  const el = document.getElementById(`ksrc-${code}`);
+  if (!el) return;
+  const degraded = !!source && source !== primarySourceOf(code);
+  el.textContent = sourceLabel(source, code);
+  el.className = 'kline-tag' + (degraded ? ' degraded' : '');
+  el.title = degraded
+    ? `K线主源不可用，已降级到 ${SOURCE_LABEL[source] || source}`
+    : `K线数据源：${SOURCE_LABEL[source] || source}`;
+}
+
+// 右上角「重试 K线」：绕过 60 秒节流，强制所有自选股重拉 K 线。
+// 后端每次都会从头按 主源→备源→兜底 试一遍，所以主源一恢复，下一次请求就回来，
+// 这个按钮只是不用干等那 60 秒。
+async function retryAllKlines() {
+  const btn = document.getElementById('retryKlineBtn');
+  if (!watchlist.length) { flash('自选股为空'); return; }
+  if (btn.disabled) return;
+  const old = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '重试中...';
+  try {
+    await Promise.all(watchlist.map(code => loadChart(code, true)));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = old;
+  }
+}
+
 // ========== 工具函数 ==========
 
 function formatVolume(v) {
@@ -509,6 +628,140 @@ function formatAmount(v) {
   if (v >= 1e8) return (v / 1e8).toFixed(2) + '亿';
   if (v >= 1e4) return (v / 1e4).toFixed(2) + '万';
   return v.toString();
+}
+
+// ========== 导出 / 导入密钥 ==========
+// 只打包 watchlist —— localStorage 里唯一持久化的状态。
+// 不含密码、凭证、个人信息，明文分享没有问题。
+//
+// 格式：SDKB.<版本>.<base64url(JSON)>.<fnv1a 校验码>
+//   base64url  —— 用 -_ 替 +/ 并去掉 =，避免复制粘贴时被改写或截断
+//   校验码     —— 抓「没复制全 / 中间缺字」这种最常见的失败，而不是让它静默导入错内容
+const EXPORT_MAGIC = 'SDKB';
+const EXPORT_VER = 1;
+
+function b64urlEncode(obj) {
+  const bytes = new TextEncoder().encode(JSON.stringify(obj));
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function b64urlDecode(s) {
+  s = s.replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4) s += '=';
+  return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(s), c => c.charCodeAt(0))));
+}
+
+// FNV-1a 32bit，取后 5 位 base36
+function fnv1a(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193) >>> 0;
+  return h.toString(36).padStart(5, '0').slice(-5);
+}
+
+function buildKey() {
+  const body = b64urlEncode({ v: EXPORT_VER, t: Date.now(), watchlist: watchlist.slice() });
+  return `${EXPORT_MAGIC}.${EXPORT_VER}.${body}.${fnv1a(body)}`;
+}
+
+function parseKey(str) {
+  const s = String(str).trim();
+  if (!s) return { error: '密钥为空' };
+  const p = s.split('.');
+  if (p.length !== 4) return { error: '格式不对，应为 标识.版本.内容.校验码' };
+  if (p[0] !== EXPORT_MAGIC) return { error: '这不是本看板的导出密钥' };
+  if (Number(p[1]) !== EXPORT_VER) return { error: `不支持的版本 ${p[1]}（当前 ${EXPORT_VER}）` };
+  if (fnv1a(p[2]) !== p[3].toLowerCase()) return { error: '校验失败：密钥可能没复制完整' };
+  try {
+    const data = b64urlDecode(p[2]);
+    if (!Array.isArray(data.watchlist)) return { error: '密钥内容损坏：缺少自选股列表' };
+    return { data };
+  } catch (e) {
+    return { error: '内容解析失败：' + e.message };
+  }
+}
+
+// ---- 弹窗 ----
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function openModal(title, bodyHtml) {
+  document.getElementById('modalTitle').textContent = title;
+  document.getElementById('modalBody').innerHTML = bodyHtml;
+  document.getElementById('modalMask').classList.add('show');
+}
+
+function closeModal() {
+  document.getElementById('modalMask').classList.remove('show');
+}
+
+// ---- 导出 ----
+function exportKey() {
+  if (!watchlist.length) { flash('自选股为空，没有内容可导出'); return; }
+  const key = buildKey();
+  openModal('导出密钥', `
+    <div class="hint-line">这段是自选股列表的编码，<strong>不含任何密码或隐私</strong>，可以放心分享。</div>
+    <div class="hint-line">在别的浏览器/设备上打开本页 → 点「⤒ 导入」→ 粘贴 → 恢复。</div>
+    <textarea id="exportText" readonly>${escapeHtml(key)}</textarea>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal()">关闭</button>
+      <button class="btn btn-primary" id="copyBtn" onclick="copyExport()">复制密钥</button>
+    </div>
+  `);
+  const ta = document.getElementById('exportText');
+  ta.focus();
+  ta.select();
+}
+
+async function copyExport() {
+  const ta = document.getElementById('exportText');
+  const btn = document.getElementById('copyBtn');
+  ta.focus();
+  ta.select();
+  let ok = false;
+  try {
+    await navigator.clipboard.writeText(ta.value);
+    ok = true;
+  } catch (e) {
+    try { document.execCommand('copy'); ok = true; } catch (_) { ok = false; }
+  }
+  btn.textContent = ok ? '✓ 已复制' : '请手动全选复制';
+  setTimeout(() => { btn.textContent = '复制密钥'; }, 1800);
+}
+
+// ---- 导入 ----
+function importKey() {
+  openModal('导入密钥', `
+    <div class="hint-line">粘贴在别处导出的密钥。导入会<strong>合并</strong>到当前自选股，不会删除你已有的。</div>
+    <textarea id="importText" placeholder="SDKB.1.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"></textarea>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal()">取消</button>
+      <button class="btn btn-primary" onclick="doImport()">导入</button>
+    </div>
+  `);
+  document.getElementById('importText').focus();
+}
+
+function doImport() {
+  const text = document.getElementById('importText').value;
+  if (!text.trim()) { flash('请先粘贴密钥'); return; }
+
+  const r = parseKey(text);
+  if (r.error) { flash(r.error); return; }
+
+  const list = r.data.watchlist.filter(c => typeof c === 'string' && c.trim());
+  if (!list.length) { flash('密钥里没有自选股'); return; }
+
+  let added = 0;
+  for (const code of list) {
+    if (!watchlist.includes(code)) { watchlist.push(code); added++; }
+  }
+  saveWatchlist();
+  render();
+  closeModal();
+  flash(`导入完成：${list.length} 只，新增 ${added} 只`);
 }
 
 // ========== 初始化 ==========
@@ -529,6 +782,9 @@ function startGlobalPolling() {
 loadWatchlist();
 render();
 startGlobalPolling();
+
+// ESC 关闭弹窗
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
 // 页面可见时才刷新
 document.addEventListener('visibilitychange', () => {

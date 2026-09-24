@@ -435,7 +435,7 @@ export default {
       const keyword = url.searchParams.get('q')
       if (!keyword || !keyword.trim()) {
         return new Response(JSON.stringify({ success: true, data: [] }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          headers: { ...corsHeaders, 'Content-Type': 'application/json; charset=utf-8' }
         })
       }
 
@@ -470,12 +470,12 @@ export default {
         }).filter(x => x.name && x.code)
 
         return new Response(JSON.stringify({ success: true, data: items.slice(0, 10) }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          headers: { ...corsHeaders, 'Content-Type': 'application/json; charset=utf-8' }
         })
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), {
           status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          headers: { ...corsHeaders, 'Content-Type': 'application/json; charset=utf-8' }
         })
       }
     }
@@ -485,7 +485,7 @@ export default {
       if (!code) {
         return new Response(JSON.stringify({ error: 'Missing code parameter' }), {
           status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          headers: { ...corsHeaders, 'Content-Type': 'application/json; charset=utf-8' }
         })
       }
 
@@ -505,7 +505,7 @@ export default {
         if (!aCode && !hkCode && !usCode) {
           return new Response(JSON.stringify({
             error: 'Invalid code format. Use sh600519 / sz000001 / hk00700 / AAPL'
-          }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+          }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json; charset=utf-8' } })
         }
 
         let result
@@ -526,12 +526,12 @@ export default {
           fromCache: result.fromCache,
           stale: result.stale || false
         }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          headers: { ...corsHeaders, 'Content-Type': 'application/json; charset=utf-8' }
         })
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), {
           status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          headers: { ...corsHeaders, 'Content-Type': 'application/json; charset=utf-8' }
         })
       }
     }
@@ -544,7 +544,7 @@ export default {
       if (!code) {
         return new Response(JSON.stringify({ error: 'Missing code parameter' }), {
           status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          headers: { ...corsHeaders, 'Content-Type': 'application/json; charset=utf-8' }
         })
       }
 
@@ -556,7 +556,7 @@ export default {
         if (!aCode && !hkCode && !usCode) {
           return new Response(JSON.stringify({
             error: 'Invalid code format. Use sh600519 / sz000001 / hk00700 / AAPL'
-          }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+          }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json; charset=utf-8' } })
         }
 
         let result
@@ -576,12 +576,12 @@ export default {
           source: (result.data && result.data.source) || null,
           fromCache: result.fromCache
         }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          headers: { ...corsHeaders, 'Content-Type': 'application/json; charset=utf-8' }
         })
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), {
           status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          headers: { ...corsHeaders, 'Content-Type': 'application/json; charset=utf-8' }
         })
       }
     }
@@ -593,14 +593,14 @@ export default {
         cacheSize: cache.size,
         timestamp: Date.now() 
       }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        headers: { ...corsHeaders, 'Content-Type': 'application/json; charset=utf-8' }
       })
     }
 
     // 其他路由重定向到首页
     return new Response(JSON.stringify({ error: 'Not found', path }), {
       status: 404,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      headers: { ...corsHeaders, 'Content-Type': 'application/json; charset=utf-8' }
     })
   }
 }

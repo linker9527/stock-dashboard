@@ -14,7 +14,7 @@ const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js':   'application/javascript; charset=utf-8',
   '.css':  'text/css; charset=utf-8',
-  '.json': 'application/json',
+  '.json': 'application/json; charset=utf-8',
   '.svg':  'image/svg+xml',
 }
 
@@ -29,12 +29,12 @@ const server = http.createServer(async (req, res) => {
       const workerRes = await handler.fetch(workerReq)
       const body = await workerRes.text()
       res.writeHead(workerRes.status, {
-        'Content-Type': 'application/json',
+        'Content-Type': 'application/json; charset=utf-8',
         'Access-Control-Allow-Origin': '*',
       })
       res.end(body)
     } catch (e) {
-      res.writeHead(500, { 'Content-Type': 'application/json' })
+      res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' })
       res.end(JSON.stringify({ error: e.message }))
     }
     return
