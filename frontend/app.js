@@ -402,9 +402,12 @@ async function loadCard(code) {
         <div class="detail-item"><span class="detail-label">最低</span><span class="detail-value down">${v(d.low)}</span></div>
         <div class="detail-item"><span class="detail-label">成交量</span><span class="detail-value">${formatVolume(d.volume)}</span></div>
         <div class="detail-item"><span class="detail-label">成交额</span><span class="detail-value">${formatAmount(d.turnover)}</span></div>
-        ${d.pe != null ? `<div class="detail-item"><span class="detail-label">市盈率</span><span class="detail-value">${d.pe.toFixed(2)}</span></div>` : ''}
-        ${d.pb != null ? `<div class="detail-item"><span class="detail-label">市净率</span><span class="detail-value">${d.pb.toFixed(2)}</span></div>` : ''}
-        ${d.marketCap != null ? `<div class="detail-item"><span class="detail-label">总市值</span><span class="detail-value">${formatAmount(d.marketCap)}</span></div>` : ''}
+        <!-- 估值字段始终渲染、缺失显示 '-'，和上面几个字段行为一致。
+             之前是「有才渲染」，而各源覆盖不同（新浪全空、腾讯对港股美股无 pb），
+             导致同屏卡片行数不一样，看起来像"数据加载不全"。 -->
+        <div class="detail-item"><span class="detail-label">市盈率</span><span class="detail-value">${v(d.pe)}</span></div>
+        <div class="detail-item"><span class="detail-label">市净率</span><span class="detail-value">${v(d.pb)}</span></div>
+        <div class="detail-item"><span class="detail-label">总市值</span><span class="detail-value">${d.marketCap == null ? '-' : formatAmount(d.marketCap)}</span></div>
       `;
     }
     
@@ -418,7 +421,12 @@ async function loadCard(code) {
       sourceEl.textContent = label;
       sourceEl.className = 'source-tag' + (degraded ? ' degraded' : '');
       sourceEl.title = degraded
-        ? `主源 ${SOURCE_LABEL[primary] || primary} 不可用，已降级到 ${SOURCE_LABEL[d.source] || d.source}。估值字段（市盈率/市净率/总市值）当前不可用。`
+        // 之前一律写"估值字段当前不可用"是错的：腾讯降级时 A股估值字段齐全，
+        // 港股/美股只是缺市净率。按实际字段判断，别给用户错误的解释。
+        ? `主源 ${SOURCE_LABEL[primary] || primary} 不可用，已降级到 ${SOURCE_LABEL[d.source] || d.source}。`
+          + (d.pe == null && d.pb == null && d.marketCap == null
+            ? '该备源不提供估值字段（市盈率/市净率/总市值），所以显示 -。'
+            : '该备源估值字段不完整（腾讯对港股/美股没有市净率），所以部分显示 -。')
         : `数据源：${SOURCE_LABEL[d.source] || d.source}`;
     }
     
