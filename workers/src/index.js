@@ -632,10 +632,7 @@ export default {
       })
     }
 
-    // 其他路由重定向到首页
-    return new Response(JSON.stringify({ error: 'Not found', path }), {
-      status: 404,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json; charset=utf-8' }
-    })
+    // 非 API 请求 → 前端静态文件
+    return ASSETS.fetch(request)
   }
 }
