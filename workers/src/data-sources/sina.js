@@ -67,6 +67,7 @@ export async function fetchKline(code, period = 'day', count = 100) {
       'Referer': 'https://finance.sina.com.cn'
     }
   })
+  if (!response.ok) throw new Error(`Sina Kline HTTP ${response.status}`)
   const data = await response.json()
 
   if (!Array.isArray(data) || data.length === 0) {

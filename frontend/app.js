@@ -95,7 +95,7 @@ function normalizeCode(input) {
   }
   // 裸 4-5 位数字 = 港股，补 hk 前缀并补足 5 位（700 -> hk00700）
   if (/^\d{4,5}$/.test(code)) return 'hk' + code.padStart(5, '0');
-  return code;
+  return input.trim().toUpperCase();  // 美股 ticker 保持大写，与后端 normalizeUSCode 一致
 }
 
 // 市场标签（用于下拉显示）
