@@ -838,3 +838,8 @@ document.addEventListener('visibilitychange', () => {
   const splash = document.getElementById('bootSplash');
   if (splash) splash.remove();
 })();
+
+// 注册 Service Worker：首次加载后缓存全部静态资源，后续秒开
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
