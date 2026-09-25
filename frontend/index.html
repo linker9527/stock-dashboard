@@ -364,6 +364,32 @@
       color: #888;
       font-size: 14px;
     }
+    /* 首屏加载遮罩：HTML 渲染出来立刻可见，app.js 加载完后隐藏 */
+    #bootSplash {
+      position: fixed;
+      inset: 0;
+      background: #1a1a1a;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      gap: 16px;
+    }
+    #bootSplash .spinner {
+      width: 36px;
+      height: 36px;
+      border: 3px solid #333;
+      border-top-color: #4a90d9;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #bootSplash .boot-text {
+      color: #888;
+      font-size: 14px;
+      letter-spacing: 1px;
+    }
     
     @media (max-width: 480px) {
       body { padding: 8px; }
@@ -373,6 +399,12 @@
   </style>
 </head>
 <body>
+  <!-- 首屏加载：HTML 解析完立刻显示，app.js onload 后消失 -->
+  <div id="bootSplash">
+    <div class="spinner"></div>
+    <div class="boot-text">股票看板加载中…</div>
+  </div>
+
   <div class="top-bar">
     <h1>📈 股票看板</h1>
     <div class="top-actions">

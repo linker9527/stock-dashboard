@@ -832,3 +832,9 @@ document.addEventListener('visibilitychange', () => {
     watchlist.forEach(code => loadCard(code));
   }
 });
+
+// app.js 加载完成 → 隐藏首屏遮罩
+(function hideBootSplash() {
+  const splash = document.getElementById('bootSplash');
+  if (splash) splash.remove();
+})();
