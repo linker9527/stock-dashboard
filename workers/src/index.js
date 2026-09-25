@@ -134,12 +134,17 @@ function normalizeHKCode(code) {
 // 代码分流：A股(sh/sz前缀或6位数字) / 港股(hk前缀或裸4-5位数字) / 美股(其余字母)
 // 裸 5 位 "00700" 是港股常见写法，页面提示词也这么教，必须认（NEW-11）
 function classifyCode(code) {
+  const raw = String(code).trim()
   const aCode = normalizeAStockCode(code)
   if (aCode) return { aCode }
-  if (/^hk/i.test(code) || /^\d{4,5}$/.test(String(code).trim())) {
-    return { hkCode: normalizeHKCode(code) }
+  // 北交所（4/8/920 开头）显式拒绝，不落入美股分支（BUG-1）
+  if (/^(4|8[0-49]|920)\d{5}$/.test(raw)) return { unsupported: true }
+  if (/^hk/i.test(raw) || /^\d{4,5}$/.test(raw)) {
+    return { hkCode: normalizeHKCode(raw) }
   }
-  return { usCode: normalizeUSCode(code) }
+  // 纯前缀无数字（如 "sh"）不算美股（BUG-10）
+  if (/^(sh|sz|bj)$/i.test(raw)) return { unsupported: true }
+  return { usCode: normalizeUSCode(raw) }
 }
 
 // count 限幅，避免 lmt=-5 / lmt=99999999 透传到上游
@@ -531,9 +536,9 @@ export default {
 
       try {
         // 按市场分流：A股(sh/sz/6位) / 港股(hk前缀或裸4-5位) / 美股(其余)
-        const { aCode, hkCode, usCode } = classifyCode(code)
+        const { aCode, hkCode, usCode, unsupported } = classifyCode(code)
 
-        if (!aCode && !hkCode && !usCode) {
+        if (unsupported || (!aCode && !hkCode && !usCode)) {
           return new Response(JSON.stringify({
             error: 'Invalid code format. Use sh600519 / sz000001 / hk00700 / AAPL'
           }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json; charset=utf-8' } })
@@ -587,9 +592,9 @@ export default {
       }
 
       try {
-        const { aCode, hkCode, usCode } = classifyCode(code)
+        const { aCode, hkCode, usCode, unsupported } = classifyCode(code)
 
-        if (!aCode && !hkCode && !usCode) {
+        if (unsupported || (!aCode && !hkCode && !usCode)) {
           return new Response(JSON.stringify({
             error: 'Invalid code format. Use sh600519 / sz000001 / hk00700 / AAPL'
           }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json; charset=utf-8' } })
