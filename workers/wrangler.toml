@@ -25,6 +25,5 @@ compatibility_date = "2024-01-01"
 compatibility_flags = ["nodejs_compat"]
 
 # 前端静态文件 — Worker 同时提供前端页面和 API
-# 非 /api/* 请求自动从 frontend/ 目录提供静态资源
 [assets]
-directory = "../frontend"
+directory = "../frontend/"
