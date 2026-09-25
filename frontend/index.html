@@ -15,18 +15,19 @@
     }
     h1 { text-align: center; font-size: 22px; color: #fff; }
     .top-bar {
-      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
       max-width: 1400px;
       margin: 0 auto 16px;
-      min-height: 26px;
+      gap: 8px;
+      flex-wrap: wrap;
     }
-    .top-bar h1 { margin: 0; }
+    .top-bar h1 { margin: 0; flex-shrink: 0; }
     .top-bar .top-actions {
-      position: absolute;
-      top: 0;
-      right: 0;
       display: flex;
       gap: 6px;
+      flex-wrap: wrap;
     }
     .top-bar .top-actions button {
       padding: 6px 12px;
@@ -383,7 +384,7 @@
   
   <div class="search-bar">
     <div class="search-wrap">
-      <input type="text" id="searchInput" placeholder="输入名称、代码或拼音，如 茅台 / 600519 / AAPL" autocomplete="off" />
+      <input type="text" id="searchInput" placeholder="搜索 股票名 / 代码 / 拼音" autocomplete="off" />
       <div class="search-suggest" id="searchSuggest"></div>
     </div>
     <button onclick="addStock()">添加</button>

@@ -306,6 +306,8 @@ function bindSearch() {
 
 function render() {
   const grid = document.getElementById('grid');
+  const retryBtn = document.getElementById('retryKlineBtn');
+  if (retryBtn) retryBtn.style.display = watchlist.length > 0 ? '' : 'none';
 
   if (watchlist.length === 0) {
     grid.innerHTML = '<div class="empty">暂无自选股，输入代码开始追踪</div>';
