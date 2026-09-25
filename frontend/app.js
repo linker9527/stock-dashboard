@@ -180,7 +180,10 @@ async function fetchQuote(code) {
   const json = await res.json();
   
   if (!json.success) {
-    throw new Error(json.error || '请求失败');
+    // 区分 400（代码不支持）和其他错误（后端离线）
+    const err = new Error(json.error || '请求失败');
+    err.status = res.status;
+    throw err;
   }
   
   return json;
@@ -440,14 +443,45 @@ async function loadCard(code) {
 
   } catch (e) {
     // 后端连不上 ≠ 降级。降级还有价，离线什么都没有；
-    // 之前只把价格换成 ❌，而详情/K线/来源角标全是上一次的旧值，
-    // 看起来像"某个字段没加载出来"，其实是整台后端没了。
-    markOffline(code, e.message);
+    // 400 = 代码不支持（北交所等），不应重试也不应标"离线"
+    if (e.status === 400) {
+      markUnsupported(code, e.message);
+    } else {
+      markOffline(code, e.message);
+    }
   }
 }
 
 // 离线态（后端不可达）与降级态（有价但缺字段）必须在视觉上分开
-const CARD_STATUS = {};   // code -> 'ok' | 'offline'
+const CARD_STATUS = {};   // code -> 'ok' | 'offline' | 'unsupported'
+
+function markUnsupported(code, msg) {
+  CARD_STATUS[code] = 'unsupported';
+  const card = document.getElementById(`card-${code}`);
+  if (card) card.classList.add('offline');  // 复用 offline 样式，文字区分
+
+  const priceEl = document.getElementById(`price-${code}`);
+  if (priceEl) {
+    priceEl.textContent = '不支持';
+    priceEl.className = 'price flat';
+    priceEl.title = msg;
+  }
+
+  const changeEl = document.getElementById(`change-${code}`);
+  if (changeEl) { changeEl.textContent = '--'; changeEl.className = 'change flat'; }
+
+  const detailsEl = document.getElementById(`details-${code}`);
+  if (detailsEl) {
+    detailsEl.innerHTML =
+      '<div class="detail-item"><span class="detail-label" style="grid-column:span 2;text-align:center;color:#e0a33d;">该代码暂不支持（仅支持沪深/港股/美股）</span></div>';
+  }
+
+  const sourceEl = document.getElementById(`source-${code}`);
+  if (sourceEl) {
+    sourceEl.textContent = '不支持';
+    sourceEl.className = 'source-tag degraded';  // 琥珀色，区别于红色离线
+    sourceEl.title = msg;
+  }
 
 function markOffline(code, msg) {
   CARD_STATUS[code] = 'offline';
