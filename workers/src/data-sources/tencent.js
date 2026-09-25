@@ -37,8 +37,8 @@ function pad(code) {
   return code.replace(/^(sh|sz|bj)/i, '')
 }
 
-async function raw(url) {
-  const r = await fetchTimeout(url, { headers: { 'User-Agent': 'Mozilla/5.0' } })
+async function raw(url, timeoutMs) {
+  const r = await fetchTimeout(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, timeoutMs)
   if (!r.ok) throw new Error(`Tencent HTTP ${r.status}`)
   return r.text()
 }
@@ -124,7 +124,8 @@ function parseLine(str, code, isUS = false) {
 export async function fetchAKline(code, period = 'day', count = 100) {
   const type = mapPeriod(period)
   const text = await raw(
-    `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${code},${type},,,${count},qfq`
+    `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${code},${type},,,${count},qfq`,
+    4000 // K线超时 4 秒，快速降级
   )
   const data = JSON.parse(text)
   const node = data.data && data.data[code]
@@ -175,7 +176,8 @@ export async function fetchUSKline(symbol, period = 'day', count = 100) {
     .toISOString().slice(0, 10)
 
   const text = await raw(
-    `https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param=${fullCode},${type},${start},${end},${count}`
+    `https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param=${fullCode},${type},${start},${end},${count}`,
+    4000 // K线超时 4 秒
   )
   const data = JSON.parse(text)
   if (data.code !== 0) throw new Error(`Tencent US kline: ${data.msg || 'param error'}`)
@@ -201,7 +203,8 @@ export async function fetchHKKline(code, period = 'day', count = 100) {
   const type = mapPeriod(period)
   const fullCode = 'hk' + String(code).toLowerCase().replace(/^hk/, '')
   const text = await raw(
-    `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${fullCode},${type},,,${count},qfq`
+    `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${fullCode},${type},,,${count},qfq`,
+    4000 // K线超时 4 秒
   )
   const data = JSON.parse(text)
   const node = data.data && data.data[fullCode]

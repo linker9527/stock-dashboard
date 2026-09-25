@@ -151,14 +151,15 @@ function clampCount(v, fallback = 100) {
 
 // 缓存层：同一个请求 3 秒内不重复打外部接口，避免高频刷新被限流
 const cache = new Map()
-const CACHE_TTL = 3000 // 3秒
+const CACHE_TTL = 3000 // 3秒（行情）
+const CACHE_TTL_KLINE = 60000 // 60秒（K线）
 const inflight = new Map() // key -> 进行中的 Promise
 
-async function getCached(key, fetchFn) {
+async function getCached(key, fetchFn, ttl = CACHE_TTL) {
   const now = Date.now()
   const cached = cache.get(key)
 
-  if (cached && now - cached.time < CACHE_TTL) {
+  if (cached && now - cached.time < ttl) {
     return { data: cached.data, fromCache: true }
   }
 
@@ -283,7 +284,7 @@ async function fetchHKStockKline(code, period, count) {
     }
 
     throw new Error(`HK kline failed | ${attempts.join(' | ')}`)
-  })
+  }, CACHE_TTL_KLINE)
 }
 
 // A股K线：主腾讯（CF 出口稳定）→ 备新浪 → 兜底东财
@@ -313,7 +314,7 @@ async function fetchAStockKline(code, period, count) {
     } catch (e) { attempts.push(`eastmoney: ${e.message}`) }
 
     throw new Error(`A股K线全部失败 | ${attempts.join(' | ')}`)
-  })
+  }, CACHE_TTL_KLINE)
 }
 
 // 美股查询：主腾讯（国内稳定）→ 备 Yahoo
@@ -406,7 +407,7 @@ async function fetchUSKline(symbol, period, count) {
         throw new Error(`US kline failed | tencent: ${e1.message} | yahoo: ${e2.message}`)
       }
     }
-  })
+  }, CACHE_TTL_KLINE)
 }
 
 // Yahoo 美股K线（备源）
