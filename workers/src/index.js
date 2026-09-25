@@ -196,7 +196,7 @@ async function getCached(key, fetchFn) {
   return p
 }
 
-// A股查询：主东财 → 备新浪 → 兜底腾讯
+// A股查询：主腾讯（CF 出口稳定）→ 备新浪 → 兜底东财
 async function fetchAStockQuote(code) {
   const cacheKey = `quote_a_${code}`
 
@@ -206,19 +206,20 @@ async function fetchAStockQuote(code) {
     let data = null
 
     try {
-      data = await fetchEastmoneyQuote(code)
-      data.source = 'eastmoney'
+      data = await fetchTencentAQuote(code)
+      data.source = 'tencent'
     } catch (e) {
-      attempts.push(`eastmoney: ${e.message}`)
+      attempts.push(`tencent: ${e.message}`)
       try {
         data = await fetchSinaQuote(code)
         data.source = 'sina'
       } catch (e2) {
         attempts.push(`sina: ${e2.message}`)
         try {
-          data = await fetchTencentAQuote(code)
+          data = await fetchEastmoneyQuote(code)
+          data.source = 'eastmoney'
         } catch (e3) {
-          attempts.push(`tencent: ${e3.message}`)
+          attempts.push(`eastmoney: ${e3.message}`)
         }
       }
     }
@@ -231,9 +232,8 @@ async function fetchAStockQuote(code) {
   })
 }
 
-// 港股查询：主东财（mkt 116，UTF-8 中文名）→ 备腾讯
-// 东财港股实测返回 f58="腾讯控股"，是 UTF-8 JSON，不会乱码。
-// 腾讯港股 p[1] 是 GBK 中文，但 p[46] 是英文名（TENCENT），所以降级后名称仍是干净的。
+// 港股查询：主腾讯（CF 出口稳定，英文名）→ 备东财（中文名）
+// 腾讯港股 p[46] 是英文名（TENCENT），东财被 CF 拦截时降级到这里拿中文名。
 async function fetchHKStockQuote(code) {
   const cacheKey = `quote_hk_${code}`
 
@@ -242,14 +242,15 @@ async function fetchHKStockQuote(code) {
     let data = null
 
     try {
-      data = await fetchEastmoneyQuote(code)
-      data.source = 'eastmoney'
+      data = await fetchTencentHKQuote(code)
+      data.source = 'tencent'
     } catch (e) {
-      attempts.push(`eastmoney: ${e.message}`)
+      attempts.push(`tencent: ${e.message}`)
       try {
-        data = await fetchTencentHKQuote(code)
+        data = await fetchEastmoneyQuote(code)
+        data.source = 'eastmoney'
       } catch (e2) {
-        attempts.push(`tencent: ${e2.message}`)
+        attempts.push(`eastmoney: ${e2.message}`)
       }
     }
 
@@ -258,20 +259,12 @@ async function fetchHKStockQuote(code) {
   })
 }
 
-// 港股K线：主东财 → 备腾讯 fqkline
+// 港股K线：主腾讯（CF 出口稳定）→ 备东财
 async function fetchHKStockKline(code, period, count) {
   const cacheKey = `kline_hk_${code}_${period}_${count}`
 
   return getCached(cacheKey, async () => {
     const attempts = []
-
-    try {
-      const rows = await fetchEastmoneyKline(code, period, count)
-      rows.source = 'eastmoney'
-      return rows
-    } catch (e) {
-      attempts.push(`eastmoney: ${e.message}`)
-    }
 
     try {
       const rows = await fetchTencentHKKline(code, period, count)
@@ -281,11 +274,19 @@ async function fetchHKStockKline(code, period, count) {
       attempts.push(`tencent: ${e.message}`)
     }
 
+    try {
+      const rows = await fetchEastmoneyKline(code, period, count)
+      rows.source = 'eastmoney'
+      return rows
+    } catch (e) {
+      attempts.push(`eastmoney: ${e.message}`)
+    }
+
     throw new Error(`HK kline failed | ${attempts.join(' | ')}`)
   })
 }
 
-// A股K线：主东财 → 备新浪 → 兜底腾讯
+// A股K线：主腾讯（CF 出口稳定）→ 备新浪 → 兜底东财
 // 返回 K线数组，数组上挂载 source 字段便于路由层透出
 async function fetchAStockKline(code, period, count) {
   const cacheKey = `kline_a_${code}_${period}_${count}`
@@ -294,10 +295,10 @@ async function fetchAStockKline(code, period, count) {
     const attempts = []
 
     try {
-      const rows = await fetchEastmoneyKline(code, period, count)
-      rows.source = 'eastmoney'
+      const rows = await fetchTencentAKline(code, period, count)
+      rows.source = 'tencent'
       return rows
-    } catch (e) { attempts.push(`eastmoney: ${e.message}`) }
+    } catch (e) { attempts.push(`tencent: ${e.message}`) }
 
     try {
       const rows = await fetchSinaKline(code, period, count)
@@ -306,10 +307,10 @@ async function fetchAStockKline(code, period, count) {
     } catch (e) { attempts.push(`sina: ${e.message}`) }
 
     try {
-      const rows = await fetchTencentAKline(code, period, count)
-      rows.source = 'tencent'
+      const rows = await fetchEastmoneyKline(code, period, count)
+      rows.source = 'eastmoney'
       return rows
-    } catch (e) { attempts.push(`tencent: ${e.message}`) }
+    } catch (e) { attempts.push(`eastmoney: ${e.message}`) }
 
     throw new Error(`A股K线全部失败 | ${attempts.join(' | ')}`)
   })

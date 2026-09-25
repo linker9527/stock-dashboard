@@ -20,7 +20,7 @@ let globalTimer = null;   // 全局 5 秒轮询，初始化时注册一次，不
 // ========== 数据源元信息 ==========
 // 主源不可用会降级到备源，降级必须可见（角标高亮 + 说明哪些字段没了）
 const SOURCE_LABEL = { eastmoney: '东财', sina: '新浪', tencent: '腾讯', yahoo: 'Yahoo' };
-const PRIMARY_SOURCE = { a: 'eastmoney', hk: 'eastmoney', us: 'tencent' };
+const PRIMARY_SOURCE = { a: 'tencent', hk: 'tencent', us: 'tencent' };
 
 function marketOf(code) {
   const c = String(code).toLowerCase();
