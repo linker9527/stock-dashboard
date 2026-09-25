@@ -152,7 +152,7 @@ function clampCount(v, fallback = 100) {
 // 缓存层：同一个请求 3 秒内不重复打外部接口，避免高频刷新被限流
 const cache = new Map()
 const CACHE_TTL = 3000 // 3秒（行情）
-const CACHE_TTL_KLINE = 60000 // 60秒（K线）
+const CACHE_TTL_KLINE = 300000 // 5分钟（日K数据一天才变一次）
 const inflight = new Map() // key -> 进行中的 Promise
 
 async function getCached(key, fetchFn, ttl = CACHE_TTL) {
