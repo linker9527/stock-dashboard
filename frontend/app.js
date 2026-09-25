@@ -1,21 +1,25 @@
-// 前端逻辑 // v2
-// 支持本地运行 (localhost) 和生产环�?(Cloudflare Pages)
+// 前端逻辑
+// 支持本地运行 (localhost) 和生产环境 (Cloudflare Pages)
 
-// 自动检�?API 地址
+// 自动检测 API 地址
 const API_BASE = (() => {
-  // 本地开发模�?  if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+  // 本地开发模式
+  if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
     return 'http://localhost:8787';
   }
-  // 生产环境：和前端同域�?  return location.origin;
+  // 生产环境：和前端同域名
+  return location.origin;
 })();
 
 const STORAGE_KEY = 'stock_watchlist';
-const POLL_INTERVAL = 5000; // 5秒刷新一�?
+const POLL_INTERVAL = 5000; // 5秒刷新一次
+
 let watchlist = [];
 let globalTimer = null;   // 全局 5 秒轮询，初始化时注册一次，不随 render 重建
 
 // ========== 数据源元信息 ==========
-// 主源不可用会降级到备源，降级必须可见（角标高�?+ 说明哪些字段没了�?const SOURCE_LABEL = { eastmoney: '东财', sina: '新浪', tencent: '腾讯', yahoo: 'Yahoo' };
+// 主源不可用会降级到备源，降级必须可见（角标高亮 + 说明哪些字段没了）
+const SOURCE_LABEL = { eastmoney: '东财', sina: '新浪', tencent: '腾讯', yahoo: 'Yahoo' };
 const PRIMARY_SOURCE = { a: 'tencent', hk: 'tencent', us: 'tencent' };
 
 function marketOf(code) {
@@ -55,29 +59,39 @@ let searchResults = [];   // 当前搜索建议
 let activeIndex = -1;     // 下拉高亮项（键盘上下键）
 let searchTimer = null;   // 输入防抖
 
-// 无歧义代码形式：带市场前缀，或�?6 位数字（A股）
+// 无歧义代码形式：带市场前缀，或纯 6 位数字（A股）
 //
-// 注意：纯字母【不在此列】。英�?ticker（AAPL/GOOGL）和拼音（gzmt/maotai�?// 字形完全相同，无法用正则可靠区分。若把纯字母当代码直接添加，
-// 输入 "gzmt" 会被当成美股代码发到后端然后 400（BUG-11）�?// 解法：纯字母一律走搜索接口，用下拉候选确认到底是 ticker 还是股票拼音�?// 数字/带前缀形式仍然直连，保留快速路径�?function isDefiniteCode(s) {
+// 注意：纯字母【不在此列】。英文 ticker（AAPL/GOOGL）和拼音（gzmt/maotai）
+// 字形完全相同，无法用正则可靠区分。若把纯字母当代码直接添加，
+// 输入 "gzmt" 会被当成美股代码发到后端然后 400（BUG-11）。
+// 解法：纯字母一律走搜索接口，用下拉候选确认到底是 ticker 还是股票拼音。
+// 数字/带前缀形式仍然直连，保留快速路径。
+function isDefiniteCode(s) {
   const t = s.trim();
   if (!t) return false;
-  // �?6 �?= A股；�?4-5 �?= 港股�?0700 是常见写法，NEW-11�?  return /^(sh|sz|hk)\d{4,6}$/i.test(t) || /^\d{4,6}$/.test(t);
+  // 裸 6 位 = A股；裸 4-5 位 = 港股（00700 是常见写法，NEW-11）
+  return /^(sh|sz|hk)\d{4,6}$/i.test(t) || /^\d{4,6}$/.test(t);
 }
 
 // 输入是否像代码（是则直接加，不搜索）
-// 仅作�?addStock 的兜底：当搜索无结果时才用�?// 常规路径下纯字母会先经过搜索，因此这里保持宽松无副作用�?function looksLikeCode(s) {
+// 仅作为 addStock 的兜底：当搜索无结果时才用。
+// 常规路径下纯字母会先经过搜索，因此这里保持宽松无副作用。
+function looksLikeCode(s) {
   return isDefiniteCode(s) || /^[A-Za-z][A-Za-z.\-]{0,4}$/.test(s.trim());
 }
 
-// 归一化代码：�?位数字按首位推断市场�?/6/9 开头是上证，其余是深证�?function normalizeCode(input) {
+// 归一化代码：纯6位数字按首位推断市场（5/6/9 开头是上证，其余是深证）
+function normalizeCode(input) {
   let code = input.trim().toLowerCase();
   if (/^(sh|sz|hk)\d{4,6}$/.test(code)) return code;
   if (/^\d{6}$/.test(code)) {
-    // 北交所号段�?/8/920 开头）不支持：原样透传让后端显式报错，
-    // 而不是归到深市静默查不到（NEW-12�?    if (/^(4|8|920)/.test(code)) return code;
+    // 北交所号段（4/8/920 开头）不支持：原样透传让后端显式报错，
+    // 而不是归到深市静默查不到（NEW-12）
+    if (/^(4|8|920)/.test(code)) return code;
     return (/^(5|6|9)/.test(code) ? 'sh' : 'sz') + code;
   }
-  // �?4-5 位数�?= 港股，补 hk 前缀并补�?5 位（700 -> hk00700�?  if (/^\d{4,5}$/.test(code)) return 'hk' + code.padStart(5, '0');
+  // 裸 4-5 位数字 = 港股，补 hk 前缀并补足 5 位（700 -> hk00700）
+  if (/^\d{4,5}$/.test(code)) return 'hk' + code.padStart(5, '0');
   return code;
 }
 
@@ -92,12 +106,15 @@ async function addStock() {
   let code;
   if (searchResults.length > 0) {
     // 下拉有结果：
-    //  - 键盘上下键选中过（activeIndex >= 0�?> 用选中的那一�?    //  - 只打�?ticker 直接回车（activeIndex === -1�?> 优先用精确匹配项�?    //    否则退回第一条（"苹果" 这种唯一结果就是正确目标�?    const top = searchResults[Math.max(activeIndex, 0)];
+    //  - 键盘上下键选中过（activeIndex >= 0）-> 用选中的那一项
+    //  - 只打了 ticker 直接回车（activeIndex === -1）-> 优先用精确匹配项，
+    //    否则退回第一条（"苹果" 这种唯一结果就是正确目标）
+    const top = searchResults[Math.max(activeIndex, 0)];
     const typed = raw.toUpperCase();
     const exact = searchResults.find(r => r.code.toUpperCase() === typed);
     code = (exact && activeIndex < 0) ? exact.code : top.code;
   } else if (looksLikeCode(raw)) {
-    // 搜索无结�?/ 输入被清空过：代码形式直连，名字形式走下面的搜索分支
+    // 搜索无结果 / 输入被清空过：代码形式直连，名字形式走下面的搜索分支
     code = normalizeCode(raw);
   } else {
     // 中文/拼音 -> 搜索
@@ -108,13 +125,14 @@ async function addStock() {
         return;
       }
       if (results.length > 1) {
-        // 多条结果，停在下面让用户�?        renderSuggest(results);
+        // 多条结果，停在下面让用户选
+        renderSuggest(results);
         input.focus();
         return;
       }
       code = results[0].code;
     } catch (e) {
-      flash('搜索失败�? + e.message);
+      flash('搜索失败：' + e.message);
       return;
     }
   }
@@ -122,7 +140,7 @@ async function addStock() {
   if (!code) return;
 
   if (watchlist.includes(code)) {
-    flash('已在自选里�?);
+    flash('已在自选里了');
   } else {
     watchlist.push(code);
     saveWatchlist();
@@ -174,11 +192,11 @@ async function fetchKline(code) {
   const json = await res.json();
   
   if (!json.success) {
-    throw new Error(json.error || 'K线请求失�?);
+    throw new Error(json.error || 'K线请求失败');
   }
   
-  // 后端�?K线数据源放在顶层 source（数组属性经 JSON 序列化会丢失），
-  // 所以返回整�?json，供 loadChart 把来源同步到卡片角标
+  // 后端把 K线数据源放在顶层 source（数组属性经 JSON 序列化会丢失），
+  // 所以返回整个 json，供 loadChart 把来源同步到卡片角标
   return json;
 }
 
@@ -222,8 +240,9 @@ function pickSuggest(i) {
   const input = document.getElementById('searchInput');
   const item = searchResults[i];
   if (!item) return;
-  // 必须同步 activeIndex，否�?addStock 会用 Math.max(activeIndex,0)
-  // 取到�?0 项，导致点第 3 项却添加�?1 �?  activeIndex = i;
+  // 必须同步 activeIndex，否则 addStock 会用 Math.max(activeIndex,0)
+  // 取到第 0 项，导致点第 3 项却添加第 1 项
+  activeIndex = i;
   input.value = item.name;
   addStock();
 }
@@ -248,7 +267,9 @@ function bindSearch() {
     clearTimeout(searchTimer);
     const v = input.value.trim();
     if (!v) { hideSuggest(); return; }
-    // 只有「带前缀」和「纯6位数字」是确定代码，直连不搜索�?    // 纯字母不能在这里直接判定为代码——见 isDefiniteCode 注释（BUG-11）�?    if (isDefiniteCode(v)) { hideSuggest(); return; }
+    // 只有「带前缀」和「纯6位数字」是确定代码，直连不搜索。
+    // 纯字母不能在这里直接判定为代码——见 isDefiniteCode 注释（BUG-11）。
+    if (isDefiniteCode(v)) { hideSuggest(); return; }
     searchTimer = setTimeout(async () => {
       try {
         const results = await searchStock(v);
@@ -289,13 +310,13 @@ function render() {
   if (retryBtn) retryBtn.style.display = watchlist.length > 0 ? '' : 'none';
 
   if (watchlist.length === 0) {
-    grid.innerHTML = '<div class="empty">暂无自选股，输入代码开始追�?/div>';
+    grid.innerHTML = '<div class="empty">暂无自选股，输入代码开始追踪</div>';
     return;
   }
 
   grid.innerHTML = watchlist.map(code => `
     <div class="card" id="card-${code}">
-      <div class="source-tag" id="source-${code}">加载�?/div>
+      <div class="source-tag" id="source-${code}">加载中</div>
       <div class="card-header">
         <div>
           <span class="card-title" id="name-${code}">--</span>
@@ -308,7 +329,7 @@ function render() {
         <div class="change flat" id="change-${code}">--</div>
       </div>
       <div class="details" id="details-${code}">
-        <div class="loading" style="grid-column: span 2; text-align:center;">加载�?..</div>
+        <div class="loading" style="grid-column: span 2; text-align:center;">加载中...</div>
       </div>
       <div class="chart-bar">
         <span>日K</span>
@@ -318,12 +339,16 @@ function render() {
     </div>
   `).join('');
 
-  // 删除按钮�?data-code + addEventListener，不用内�?onclick�?  // 内联拼接可注入（分享密钥可携带恶�?code，NEW-10�?  grid.querySelectorAll('.close-btn').forEach(btn => {
+  // 删除按钮用 data-code + addEventListener，不用内联 onclick：
+  // 内联拼接可注入（分享密钥可携带恶意 code，NEW-10）
+  grid.querySelectorAll('.close-btn').forEach(btn => {
     btn.addEventListener('click', () => removeStock(btn.dataset.code));
   });
   
   // 异步加载数据
-  // 卡片是刚重建的（innerHTML 已清空），所以这�?loadChart 必须强刷�?  // 否则节流判断会拦住首屏绘�?  watchlist.forEach(code => {
+  // 卡片是刚重建的（innerHTML 已清空），所以这次 loadChart 必须强刷，
+  // 否则节流判断会拦住首屏绘图
+  watchlist.forEach(code => {
     CHART_CACHE[code] = 0;
     loadCard(code);
   });
@@ -337,7 +362,8 @@ async function loadCard(code) {
     // 更新标题
     const nameEl = document.getElementById(`name-${code}`);
     if (nameEl) {
-      // 兜底顺序：后端补全的中文�?-> 原始代码�?      // 后端已过滤乱码（�?index.js �?isGarbledName），到这里要么是真名要么�?null
+      // 兜底顺序：后端补全的中文名 -> 原始代码。
+      // 后端已过滤乱码（见 index.js 的 isGarbledName），到这里要么是真名要么是 null
       nameEl.textContent = d.name || code.toUpperCase();
     }
     
@@ -345,7 +371,9 @@ async function loadCard(code) {
     const priceEl = document.getElementById(`price-${code}`);
     const changeEl = document.getElementById(`change-${code}`);
 
-    // BUG-8：停�?新上�?异常数据下后端返�?null，直�?toFixed 会抛�?    // 让整个卡片渲染中断（后续详情、K线都不画）。必须先判空�?    if (priceEl) {
+    // BUG-8：停牌/新上市/异常数据下后端返回 null，直接 toFixed 会抛错
+    // 让整个卡片渲染中断（后续详情、K线都不画）。必须先判空。
+    if (priceEl) {
       if (d.price == null) {
         priceEl.textContent = '--';
         priceEl.className = 'price flat';
@@ -367,47 +395,54 @@ async function loadCard(code) {
     // 更新详情
     const detailsEl = document.getElementById(`details-${code}`);
     if (detailsEl) {
-      // v() �?null �?'-'，但保留 0�? 是合法数据，|| 会误伤）
+      // v() 把 null 转 '-'，但保留 0（0 是合法数据，|| 会误伤）
       const v = (x, digits = 2) => (x == null ? '-' : x.toFixed(digits));
       detailsEl.innerHTML = `
         <div class="detail-item"><span class="detail-label">今开</span><span class="detail-value">${v(d.open)}</span></div>
         <div class="detail-item"><span class="detail-label">昨收</span><span class="detail-value">${v(d.prevClose)}</span></div>
-        <div class="detail-item"><span class="detail-label">最�?/span><span class="detail-value up">${v(d.high)}</span></div>
-        <div class="detail-item"><span class="detail-label">最�?/span><span class="detail-value down">${v(d.low)}</span></div>
-        <div class="detail-item"><span class="detail-label">成交�?/span><span class="detail-value">${formatVolume(d.volume)}</span></div>
-        <div class="detail-item"><span class="detail-label">成交�?/span><span class="detail-value">${formatAmount(d.turnover)}</span></div>
-        <!-- 估值字段始终渲染、缺失显�?'-'，和上面几个字段行为一致�?             之前是「有才渲染」，而各源覆盖不同（新浪全空、腾讯对港股美股�?pb），
-             导致同屏卡片行数不一样，看起来像"数据加载不全"�?-->
-        <div class="detail-item"><span class="detail-label">市盈�?/span><span class="detail-value">${v(d.pe)}</span></div>
-        <div class="detail-item"><span class="detail-label">市净�?/span><span class="detail-value">${v(d.pb)}</span></div>
-        <div class="detail-item"><span class="detail-label">总市�?/span><span class="detail-value">${d.marketCap == null ? '-' : formatAmount(d.marketCap)}</span></div>
+        <div class="detail-item"><span class="detail-label">最高</span><span class="detail-value up">${v(d.high)}</span></div>
+        <div class="detail-item"><span class="detail-label">最低</span><span class="detail-value down">${v(d.low)}</span></div>
+        <div class="detail-item"><span class="detail-label">成交量</span><span class="detail-value">${formatVolume(d.volume)}</span></div>
+        <div class="detail-item"><span class="detail-label">成交额</span><span class="detail-value">${formatAmount(d.turnover)}</span></div>
+        <!-- 估值字段始终渲染、缺失显示 '-'，和上面几个字段行为一致。
+             之前是「有才渲染」，而各源覆盖不同（新浪全空、腾讯对港股美股无 pb），
+             导致同屏卡片行数不一样，看起来像"数据加载不全"。 -->
+        <div class="detail-item"><span class="detail-label">市盈率</span><span class="detail-value">${v(d.pe)}</span></div>
+        <div class="detail-item"><span class="detail-label">市净率</span><span class="detail-value">${v(d.pb)}</span></div>
+        <div class="detail-item"><span class="detail-label">总市值</span><span class="detail-value">${d.marketCap == null ? '-' : formatAmount(d.marketCap)}</span></div>
       `;
     }
     
-    // 更新数据源标签：非主源时琥珀色高亮，让降级可见（不再静默�?    const sourceEl = document.getElementById(`source-${code}`);
+    // 更新数据源标签：非主源时琥珀色高亮，让降级可见（不再静默）
+    const sourceEl = document.getElementById(`source-${code}`);
     if (sourceEl) {
       const primary = primarySourceOf(code);
       const degraded = !!d.source && d.source !== primary;
       let label = sourceLabel(d.source, code);
-      if (result.stale) label += '·�?;
+      if (result.stale) label += '·旧';
       sourceEl.textContent = label;
       sourceEl.className = 'source-tag' + (degraded ? ' degraded' : '');
       sourceEl.title = degraded
-        // 之前一律写"估值字段当前不可用"是错的：腾讯降级�?A股估值字段齐全，
-        // 港股/美股只是缺市净率。按实际字段判断，别给用户错误的解释�?        ? `主源 ${SOURCE_LABEL[primary] || primary} 不可用，已降级到 ${SOURCE_LABEL[d.source] || d.source}。`
+        // 之前一律写"估值字段当前不可用"是错的：腾讯降级时 A股估值字段齐全，
+        // 港股/美股只是缺市净率。按实际字段判断，别给用户错误的解释。
+        ? `主源 ${SOURCE_LABEL[primary] || primary} 不可用，已降级到 ${SOURCE_LABEL[d.source] || d.source}。`
           + (d.pe == null && d.pb == null && d.marketCap == null
-            ? '该备源不提供估值字段（市盈�?市净�?总市值），所以显�?-�?
-            : '该备源估值字段不完整（腾讯对港股/美股没有市净率），所以部分显�?-�?)
+            ? '该备源不提供估值字段（市盈率/市净率/总市值），所以显示 -。'
+            : '该备源估值字段不完整（腾讯对港股/美股没有市净率），所以部分显示 -。')
         : `数据源：${SOURCE_LABEL[d.source] || d.source}`;
     }
     
-    // 加载K线（60 秒节流，避免�?5 秒重�?—�?BUG-9�?    loadChart(code);
+    // 加载K线（60 秒节流，避免每 5 秒重拉 —— BUG-9）
+    loadChart(code);
 
-    // 本次成功，清除离线标�?    markOnline(code);
+    // 本次成功，清除离线标记
+    markOnline(code);
 
   } catch (e) {
-    // 后端连不�?�?降级。降级还有价，离线什么都没有�?    // 之前只把价格换成 ❌，而详�?K�?来源角标全是上一次的旧值，
-    // 看起来像"某个字段没加载出�?，其实是整台后端没了�?    markOffline(code, e.message);
+    // 后端连不上 ≠ 降级。降级还有价，离线什么都没有；
+    // 之前只把价格换成 ❌，而详情/K线/来源角标全是上一次的旧值，
+    // 看起来像"某个字段没加载出来"，其实是整台后端没了。
+    markOffline(code, e.message);
   }
 }
 
@@ -423,7 +458,7 @@ function markOffline(code, msg) {
   if (priceEl) {
     priceEl.textContent = '离线';
     priceEl.className = 'price flat';
-    priceEl.title = '后端离线�? + msg;
+    priceEl.title = '后端离线：' + msg;
   }
 
   const changeEl = document.getElementById(`change-${code}`);
@@ -432,7 +467,7 @@ function markOffline(code, msg) {
   const detailsEl = document.getElementById(`details-${code}`);
   if (detailsEl) {
     detailsEl.innerHTML =
-      '<div class="detail-item"><span class="detail-label" style="grid-column:span 2;text-align:center;color:#ff9b9b;">行情获取失败�? 秒后自动重试</span></div>';
+      '<div class="detail-item"><span class="detail-label" style="grid-column:span 2;text-align:center;color:#ff9b9b;">行情获取失败，5 秒后自动重试</span></div>';
   }
 
   const sourceEl = document.getElementById(`source-${code}`);
@@ -452,7 +487,7 @@ function markOnline(code) {
   updateOfflineBanner();
 }
 
-// 只有「全部卡片都离线」才弹横�?—�?个别失败可能是单股异常，全部失败才是后端没了
+// 只有「全部卡片都离线」才弹横幅 —— 个别失败可能是单股异常，全部失败才是后端没了
 function updateOfflineBanner() {
   const banner = document.getElementById('offlineBanner');
   if (!banner) return;
@@ -461,15 +496,22 @@ function updateOfflineBanner() {
   banner.classList.toggle('show', total > 0 && off === total);
 }
 
-const CHART_CACHE = {};          // code -> 最近一次成功拉取的时间�?const KLINE_INTERVAL = 60000;    // K�?60 秒才重拉一次（行情 5 秒）
+const CHART_CACHE = {};          // code -> 最近一次成功拉取的时间戳
+const KLINE_INTERVAL = 60000;    // K线 60 秒才重拉一次（行情 5 秒）
 
-// 简化的K线图（用 canvas 手绘，不用额外库�?// BUG-9：quote �?5 秒刷新一次，�?K 线不需要这么频繁�?// 原实现每�?loadCard 都重�?/api/kline 并重�?canvas，一天能打几千个请求�?// 白白吃免费额度。改�?60 秒节流；canvas 已存在时只重绘数据，不重建节点�?async function loadChart(code, force = false) {
+// 简化的K线图（用 canvas 手绘，不用额外库）
+// BUG-9：quote 每 5 秒刷新一次，但 K 线不需要这么频繁。
+// 原实现每次 loadCard 都重拉 /api/kline 并重建 canvas，一天能打几千个请求，
+// 白白吃免费额度。改成 60 秒节流；canvas 已存在时只重绘数据，不重建节点。
+async function loadChart(code, force = false) {
   const container = document.getElementById(`chart-${code}`);
   if (!container) return;
 
   const now = Date.now();
   if (!force && CHART_CACHE[code] && now - CHART_CACHE[code] < KLINE_INTERVAL) return;
-  // 失败也记录尝试时间：之前只在成功时写，持续失败的股票会每 5 秒白打一�?  // 上游（一天约 1.7 万请求），还会加剧东财的 IP 限流（NEW-8�?  CHART_CACHE[code] = now;
+  // 失败也记录尝试时间：之前只在成功时写，持续失败的股票会每 5 秒白打一次
+  // 上游（一天约 1.7 万请求），还会加剧东财的 IP 限流（NEW-8）
+  CHART_CACHE[code] = now;
 
   try {
     const json = await fetchKline(code);
@@ -479,16 +521,17 @@ const CHART_CACHE = {};          // code -> 最近一次成功拉取的时间�?
     drawChart(container, data);
     updateKlineTag(code, json.source, json.stale);
   } catch (e) {
-    // 失败不重建容器，避免�?5 秒闪一�?加载失败"
+    // 失败不重建容器，避免每 5 秒闪一次"加载失败"
     if (!container.querySelector('canvas') && !container.querySelector('.loading')) {
-      container.innerHTML = '<div class="loading" style="text-align:center;padding-top:80px;">K线加载失�?/div>';
+      container.innerHTML = '<div class="loading" style="text-align:center;padding-top:80px;">K线加载失败</div>';
     }
   }
 }
 
 function drawChart(container, klineData) {
   // 过滤无效 K线：Yahoo 兜底常见 null OHLC，Number(null)=0 会把 minPrice 拉到 0
-  // 压扁整图；parseFloat 失败�?NaN 则让 Math.min �?NaN、整图空白（NEW-9�?  const data = klineData
+  // 压扁整图；parseFloat 失败的 NaN 则让 Math.min 得 NaN、整图空白（NEW-9）
+  const data = klineData
     .filter(k => k && ['open', 'close', 'high', 'low'].every(f => Number.isFinite(k[f])))
     .slice(-30);
   if (!data.length) return;
@@ -511,13 +554,16 @@ function drawChart(container, klineData) {
   const prices = data.flatMap(k => [k.high, k.low]);
   const minPrice = Math.min(...prices);
   const maxPrice = Math.max(...prices);
-  // 停牌�?横盘�?max==min，价差为 0。不�?fallback 到绝对�?1�?  // 那会�?340 元的股票渲染成一条贴底的线。改用价格的 0.5% 作为最小价差�?  const priceRange = maxPrice - minPrice || Math.abs(minPrice) * 0.005 || 1;
+  // 停牌股/横盘时 max==min，价差为 0。不能 fallback 到绝对值 1：
+  // 那会让 340 元的股票渲染成一条贴底的线。改用价格的 0.5% 作为最小价差。
+  const priceRange = maxPrice - minPrice || Math.abs(minPrice) * 0.005 || 1;
   
   const padding = 10;
   const chartHeight = height - padding * 2;
   const barWidth = (width - padding * 2) / data.length - 2;
   
-  // 绘制每根K�?  data.forEach((k, i) => {
+  // 绘制每根K线
+  data.forEach((k, i) => {
     const x = padding + i * (barWidth + 2) + 1;
     const openY = padding + (1 - (k.open - minPrice) / priceRange) * chartHeight;
     const closeY = padding + (1 - (k.close - minPrice) / priceRange) * chartHeight;
@@ -553,32 +599,38 @@ function drawChart(container, klineData) {
   ctx.stroke();
   ctx.setLineDash([]);
   
-  // 最新价格标�?  ctx.fillStyle = '#888';
+  // 最新价格标签
+  ctx.fillStyle = '#888';
   ctx.font = '11px sans-serif';
   ctx.fillText(lastClose.toFixed(2), 4, lastY - 4);
 }
 
-// �?K 线实际数据源同步到卡片角标�?// K 线和行情可能来自不同源（K线节�?60 秒、行�?5 秒，重试节奏不同），
-// 不同源时角标高亮，免�?图上价格 �?卡片价格"却没有任何解释�?function updateKlineTag(code, source, stale) {
+// 把 K 线实际数据源同步到卡片角标。
+// K 线和行情可能来自不同源（K线节流 60 秒、行情 5 秒，重试节奏不同），
+// 不同源时角标高亮，免得"图上价格 ≠ 卡片价格"却没有任何解释。
+function updateKlineTag(code, source, stale) {
   const el = document.getElementById(`ksrc-${code}`);
   if (!el) return;
   const degraded = !!source && source !== primarySourceOf(code);
   let label = sourceLabel(source, code);
-  if (stale) label += '·�?;
+  if (stale) label += '·旧';
   el.textContent = label;
   el.className = 'kline-tag' + (degraded ? ' degraded' : '');
   el.title = degraded
-    ? `K线主源不可用，已降级�?${SOURCE_LABEL[source] || source}`
-    : `K线数据源�?{SOURCE_LABEL[source] || source}`;
+    ? `K线主源不可用，已降级到 ${SOURCE_LABEL[source] || source}`
+    : `K线数据源：${SOURCE_LABEL[source] || source}`;
 }
 
-// 右上角「重�?K线」：绕过 60 秒节流，强制所有自选股重拉 K 线�?// 后端每次都会从头�?主源→备源→兜底 试一遍，所以主源一恢复，下一次请求就回来�?// 这个按钮只是不用干等�?60 秒�?async function retryAllKlines() {
+// 右上角「重试 K线」：绕过 60 秒节流，强制所有自选股重拉 K 线。
+// 后端每次都会从头按 主源→备源→兜底 试一遍，所以主源一恢复，下一次请求就回来，
+// 这个按钮只是不用干等那 60 秒。
+async function retryAllKlines() {
   const btn = document.getElementById('retryKlineBtn');
   if (!watchlist.length) { flash('自选股为空'); return; }
   if (btn.disabled) return;
   const old = btn.textContent;
   btn.disabled = true;
-  btn.textContent = '重试�?..';
+  btn.textContent = '重试中...';
   try {
     await Promise.all(watchlist.map(code => loadChart(code, true)));
   } finally {
@@ -591,23 +643,25 @@ function drawChart(container, klineData) {
 
 function formatVolume(v) {
   if (!v) return '-';
-  if (v >= 1e8) return (v / 1e8).toFixed(2) + '�?;
-  if (v >= 1e4) return (v / 1e4).toFixed(2) + '�?;
+  if (v >= 1e8) return (v / 1e8).toFixed(2) + '亿';
+  if (v >= 1e4) return (v / 1e4).toFixed(2) + '万';
   return v.toString();
 }
 
 function formatAmount(v) {
   if (!v) return '-';
-  if (v >= 1e8) return (v / 1e8).toFixed(2) + '�?;
-  if (v >= 1e4) return (v / 1e4).toFixed(2) + '�?;
+  if (v >= 1e8) return (v / 1e8).toFixed(2) + '亿';
+  if (v >= 1e4) return (v / 1e4).toFixed(2) + '万';
   return v.toString();
 }
 
 // ========== 导出 / 导入密钥 ==========
-// 只打�?watchlist —�?localStorage 里唯一持久化的状态�?// 不含密码、凭证、个人信息，明文分享没有问题�?//
-// 格式：SDKB.<版本>.<base64url(JSON)>.<fnv1a 校验�?
-//   base64url  —�?�?-_ �?+/ 并去�?=，避免复制粘贴时被改写或截断
-//   校验�?    —�?抓「没复制�?/ 中间缺字」这种最常见的失败，而不是让它静默导入错内容
+// 只打包 watchlist —— localStorage 里唯一持久化的状态。
+// 不含密码、凭证、个人信息，明文分享没有问题。
+//
+// 格式：SDKB.<版本>.<base64url(JSON)>.<fnv1a 校验码>
+//   base64url  —— 用 -_ 替 +/ 并去掉 =，避免复制粘贴时被改写或截断
+//   校验码     —— 抓「没复制全 / 中间缺字」这种最常见的失败，而不是让它静默导入错内容
 const EXPORT_MAGIC = 'SDKB';
 const EXPORT_VER = 1;
 
@@ -624,7 +678,7 @@ function b64urlDecode(s) {
   return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(s), c => c.charCodeAt(0))));
 }
 
-// FNV-1a 32bit，取�?5 �?base36
+// FNV-1a 32bit，取后 5 位 base36
 function fnv1a(s) {
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193) >>> 0;
@@ -640,16 +694,16 @@ function parseKey(str) {
   const s = String(str).trim();
   if (!s) return { error: '密钥为空' };
   const p = s.split('.');
-  if (p.length !== 4) return { error: '格式不对，应�?标识.版本.内容.校验�? };
-  if (p[0] !== EXPORT_MAGIC) return { error: '这不是本看板的导出密�? };
-  if (Number(p[1]) !== EXPORT_VER) return { error: `不支持的版本 ${p[1]}（当�?${EXPORT_VER}）` };
+  if (p.length !== 4) return { error: '格式不对，应为 标识.版本.内容.校验码' };
+  if (p[0] !== EXPORT_MAGIC) return { error: '这不是本看板的导出密钥' };
+  if (Number(p[1]) !== EXPORT_VER) return { error: `不支持的版本 ${p[1]}（当前 ${EXPORT_VER}）` };
   if (fnv1a(p[2]) !== p[3].toLowerCase()) return { error: '校验失败：密钥可能没复制完整' };
   try {
     const data = b64urlDecode(p[2]);
     if (!Array.isArray(data.watchlist)) return { error: '密钥内容损坏：缺少自选股列表' };
     return { data };
   } catch (e) {
-    return { error: '内容解析失败�? + e.message };
+    return { error: '内容解析失败：' + e.message };
   }
 }
 
@@ -673,8 +727,8 @@ function exportKey() {
   if (!watchlist.length) { flash('自选股为空，没有内容可导出'); return; }
   const key = buildKey();
   openModal('导出密钥', `
-    <div class="hint-line">这段是自选股列表的编码，<strong>不含任何密码或隐�?/strong>，可以放心分享�?/div>
-    <div class="hint-line">在别的浏览器/设备上打开本页 �?点「⤒ 导入」→ 粘贴 �?恢复�?/div>
+    <div class="hint-line">这段是自选股列表的编码，<strong>不含任何密码或隐私</strong>，可以放心分享。</div>
+    <div class="hint-line">在别的浏览器/设备上打开本页 → 点「⤒ 导入」→ 粘贴 → 恢复。</div>
     <textarea id="exportText" readonly>${escapeHtml(key)}</textarea>
     <div class="modal-foot">
       <button class="btn" onclick="closeModal()">关闭</button>
@@ -698,14 +752,14 @@ async function copyExport() {
   } catch (e) {
     try { document.execCommand('copy'); ok = true; } catch (_) { ok = false; }
   }
-  btn.textContent = ok ? '�?已复�? : '请手动全选复�?;
+  btn.textContent = ok ? '✓ 已复制' : '请手动全选复制';
   setTimeout(() => { btn.textContent = '复制密钥'; }, 1800);
 }
 
 // ---- 导入 ----
 function importKey() {
   openModal('导入密钥', `
-    <div class="hint-line">粘贴在别处导出的密钥。导入会<strong>合并</strong>到当前自选股，不会删除你已有的�?/div>
+    <div class="hint-line">粘贴在别处导出的密钥。导入会<strong>合并</strong>到当前自选股，不会删除你已有的。</div>
     <textarea id="importText" placeholder="SDKB.1.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"></textarea>
     <div class="modal-foot">
       <button class="btn" onclick="closeModal()">取消</button>
@@ -715,7 +769,10 @@ function importKey() {
   document.getElementById('importText').focus();
 }
 
-// 代码白名单：watchlist 里的 code 会被拼进 DOM id，必须是安全字符集�?// 与后�?normalize*Code 的接受域对齐：sh/sz+6位、hk+4-5位、裸数字、美�?ticker�?// 只允�?字母/数字/�?连字�?—�?引号、尖括号、空格等一律拒绝（NEW-10 �?XSS�?function isSafeCode(code) {
+// 代码白名单：watchlist 里的 code 会被拼进 DOM id，必须是安全字符集。
+// 与后端 normalize*Code 的接受域对齐：sh/sz+6位、hk+4-5位、裸数字、美股 ticker。
+// 只允许 字母/数字/点/连字符 —— 引号、尖括号、空格等一律拒绝（NEW-10 防 XSS）
+function isSafeCode(code) {
   return /^(sh|sz)\d{6}$/i.test(code)
       || /^hk\d{4,5}$/i.test(code)
       || /^\d{4,6}$/.test(code)
@@ -732,9 +789,11 @@ function doImport() {
   const list = r.data.watchlist.filter(c => typeof c === 'string' && c.trim());
   if (!list.length) { flash('密钥里没有自选股'); return; }
 
-  // 逐个校验格式：密钥设计为可明文分享，恶意密钥可以塞入带引号的 code�?  // 不校验就会经卡片模板形成注入（NEW-10�?  const valid = list.filter(isSafeCode);
+  // 逐个校验格式：密钥设计为可明文分享，恶意密钥可以塞入带引号的 code，
+  // 不校验就会经卡片模板形成注入（NEW-10）
+  const valid = list.filter(isSafeCode);
   const dropped = list.length - valid.length;
-  if (!valid.length) { flash('密钥里的代码全部不合法，未导�?); return; }
+  if (!valid.length) { flash('密钥里的代码全部不合法，未导入'); return; }
 
   let added = 0;
   for (const code of valid) {
@@ -743,14 +802,17 @@ function doImport() {
   saveWatchlist();
   render();
   closeModal();
-  flash(`导入完成�?{valid.length} 只，新增 ${added} 只` + (dropped ? `，丢�?${dropped} 个非法代码` : ''));
+  flash(`导入完成：${valid.length} 只，新增 ${added} 只` + (dropped ? `，丢弃 ${dropped} 个非法代码` : ''));
 }
 
-// ========== 初始�?==========
+// ========== 初始化 ==========
 
-// 绑定搜索框（输入防抖搜索 + 键盘上下选择 + 回车添加�?bindSearch();
+// 绑定搜索框（输入防抖搜索 + 键盘上下选择 + 回车添加）
+bindSearch();
 
-// 全局轮询：初始化时注册一次，绝不�?render() 重建�?// 否则用户增删股票后轮询会静默停摆（BUG-1�?function startGlobalPolling() {
+// 全局轮询：初始化时注册一次，绝不随 render() 重建，
+// 否则用户增删股票后轮询会静默停摆（BUG-1）
+function startGlobalPolling() {
   if (globalTimer) clearInterval(globalTimer);
   globalTimer = setInterval(() => {
     watchlist.forEach(code => loadCard(code));
@@ -771,7 +833,7 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-// app.js 加载完成 �?隐藏首屏遮罩
+// app.js 加载完成 → 隐藏首屏遮罩
 (function hideBootSplash() {
   const splash = document.getElementById('bootSplash');
   if (splash) splash.remove();

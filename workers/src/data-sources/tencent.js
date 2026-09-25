@@ -124,8 +124,7 @@ function parseLine(str, code, isUS = false) {
 export async function fetchAKline(code, period = 'day', count = 100) {
   const type = mapPeriod(period)
   const text = await raw(
-    `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${code},${type},,,${count},qfq`,
-    4000 // K线超时 4 秒，快速降级
+    `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${code},${type},,,${count},qfq`
   )
   const data = JSON.parse(text)
   const node = data.data && data.data[code]
@@ -176,8 +175,7 @@ export async function fetchUSKline(symbol, period = 'day', count = 100) {
     .toISOString().slice(0, 10)
 
   const text = await raw(
-    `https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param=${fullCode},${type},${start},${end},${count}`,
-    4000 // K线超时 4 秒
+    `https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param=${fullCode},${type},${start},${end},${count}`
   )
   const data = JSON.parse(text)
   if (data.code !== 0) throw new Error(`Tencent US kline: ${data.msg || 'param error'}`)
@@ -203,8 +201,7 @@ export async function fetchHKKline(code, period = 'day', count = 100) {
   const type = mapPeriod(period)
   const fullCode = 'hk' + String(code).toLowerCase().replace(/^hk/, '')
   const text = await raw(
-    `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${fullCode},${type},,,${count},qfq`,
-    4000 // K线超时 4 秒
+    `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${fullCode},${type},,,${count},qfq`
   )
   const data = JSON.parse(text)
   const node = data.data && data.data[fullCode]
