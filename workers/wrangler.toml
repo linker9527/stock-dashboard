@@ -24,4 +24,7 @@ compatibility_date = "2024-01-01"
 # 配置后，Pages 域名下的 /api/* 请求会转发到这个 Worker
 compatibility_flags = ["nodejs_compat"]
 
-# 前端静态文件已由 Pages 提供（秒开），Worker 只负责 API
+# 前端静态文件 — Worker 同时提供前端页面和 API
+# 非 /api/* 请求自动从 frontend/ 目录提供静态资源
+[assets]
+directory = "../frontend"

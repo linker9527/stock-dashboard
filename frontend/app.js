@@ -7,8 +7,8 @@ const API_BASE = (() => {
   if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
     return 'http://localhost:8787';
   }
-  // 生产环境：前端在 Pages（秒开），API 走自定义域名（Worker 提供）
-  return 'https://gu-piao.ccwu.cc';
+  // 生产环境：和前端同域名
+  return location.origin;
 })();
 
 const STORAGE_KEY = 'stock_watchlist';
