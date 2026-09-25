@@ -43,7 +43,10 @@ function sourceLabel(source, code) {
 function loadWatchlist() {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
-    watchlist = saved ? JSON.parse(saved) : ['sh600519', 'sz000001'];
+    const raw = saved ? JSON.parse(saved) : ['sh600519', 'sz000001'];
+    // XSS 防护：localStorage 可能被恶意脚本写入，必须过滤
+    watchlist = (Array.isArray(raw) ? raw : []).filter(c => typeof c === 'string' && isSafeCode(c));
+    if (watchlist.length === 0) watchlist = ['sh600519', 'sz000001'];
   } catch (e) {
     watchlist = ['sh600519', 'sz000001'];
   }
@@ -357,9 +360,14 @@ function render() {
   });
 }
 
+// 竞态防护：同一 code 的并发请求只允许最新一次更新 DOM
+const CARD_GEN = {};
+
 async function loadCard(code) {
+  const gen = (CARD_GEN[code] = (CARD_GEN[code] || 0) + 1);
   try {
     const result = await fetchQuote(code);
+    if (CARD_GEN[code] !== gen) return;  // 已有更新的请求，丢弃过期结果
     const d = result.data;
     
     // 更新标题
@@ -442,6 +450,7 @@ async function loadCard(code) {
     markOnline(code);
 
   } catch (e) {
+    if (CARD_GEN[code] !== gen) return;  // 过期请求，不处理
     // 后端连不上 ≠ 降级。降级还有价，离线什么都没有；
     // 400 = 代码不支持（北交所等），不应重试也不应标"离线"
     if (e.status === 400) {
@@ -676,14 +685,16 @@ async function retryAllKlines() {
 // ========== 工具函数 ==========
 
 function formatVolume(v) {
-  if (!v) return '-';
+  if (v == null) return '-';
+  if (v === 0) return '0';
   if (v >= 1e8) return (v / 1e8).toFixed(2) + '亿';
   if (v >= 1e4) return (v / 1e4).toFixed(2) + '万';
   return v.toString();
 }
 
 function formatAmount(v) {
-  if (!v) return '-';
+  if (v == null) return '-';
+  if (v === 0) return '0';
   if (v >= 1e8) return (v / 1e8).toFixed(2) + '亿';
   if (v >= 1e4) return (v / 1e4).toFixed(2) + '万';
   return v.toString();
@@ -831,7 +842,8 @@ function doImport() {
 
   let added = 0;
   for (const code of valid) {
-    if (!watchlist.includes(code)) { watchlist.push(code); added++; }
+    const normalized = normalizeCode(code);
+    if (normalized && !watchlist.includes(normalized)) { watchlist.push(normalized); added++; }
   }
   saveWatchlist();
   render();
