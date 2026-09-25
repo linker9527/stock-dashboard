@@ -187,7 +187,7 @@ async function fetchQuote(code) {
 }
 
 async function fetchKline(code) {
-  const url = `${API_BASE}/api/kline?code=${encodeURIComponent(code)}&period=day&count=30`;
+  const url = `${API_BASE}/api/kline?code=${encodeURIComponent(code)}&period=day&count=60`;
   const res = await fetch(url);
   const json = await res.json();
   
