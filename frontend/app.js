@@ -619,9 +619,10 @@ async function loadChart(code, force = false) {
     updateKlineTag(code, json.source, json.stale, klinePeriod);
   } catch (e) {
     if (CHART_GEN[code] !== gen) return;
-    // 失败不重建容器，避免每 5 秒闪一次"加载失败"
-    if (!container.querySelector('canvas') && !container.querySelector('.loading')) {
-      container.innerHTML = '<div class="loading" style="text-align:center;padding-top:80px;">K线加载失败</div>';
+    // 没有可显示的图（首次加载或刚切过周期）→ 明确失败态；
+    // 已有旧图则保留，避免轮询期间的瞬时失败把好图刷掉
+    if (!container.querySelector('canvas')) {
+      container.innerHTML = '<div class="loading" style="text-align:center;padding-top:80px;">K线加载失败，可点右上角「↻ 重试K线」</div>';
     }
   }
 }
@@ -751,7 +752,13 @@ function bindPeriodSelect() {
   sel.addEventListener('change', () => {
     klinePeriod = sel.value;
     try { localStorage.setItem(PERIOD_STORAGE_KEY, klinePeriod); } catch (e) {}
-    watchlist.forEach(code => loadChart(code, true));
+    watchlist.forEach(code => {
+      // 切周期先清掉旧图：慢响应/失败的请求不会让旧周期图表顶着新周期标签
+      // （否则旧图根数、形态和新标签对不上，看起来像"加载变少了"）
+      const c = document.getElementById(`chart-${code}`);
+      if (c) c.innerHTML = '<div class="loading" style="text-align:center;padding-top:80px;">加载中...</div>';
+      loadChart(code, true);
+    });
     document.querySelectorAll('.kline-period').forEach(el => {
       el.textContent = PERIOD_LABEL[klinePeriod] || klinePeriod;
     });

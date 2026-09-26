@@ -271,7 +271,7 @@ async function fetchHKStockKline(code, period, count) {
   const ttl = (period === 'min5' || period === 'min60') ? CACHE_TTL_KLINE_MINUTE : CACHE_TTL_KLINE
 
   return getCached(cacheKey, async () => {
-    return await tryKlineChain('HK kline failed', klineSourceChain('hk', code, period, count))
+    return await tryKlineChain('HK kline failed', klineSourceChain('hk', code, period, count), count)
   }, ttl)
 }
 
@@ -286,12 +286,14 @@ async function fetchHKStockKline(code, period, count) {
 // 分钟周期只有东财（A股/港股）/ Yahoo（美股）一个稳定源，Yahoo 兜底防生产
 // 环境 CF 出口被东财拦截时分钟K彻底没数。
 function toYahooKlineSymbol(code) {
-  // sh600519 -> 600519.SS  sz000001 -> 000001.SZ  hk00700 -> 0700.HK
+  // sh600519 -> 600519.SS  sz000001 -> 000001.SZ  hk00020 -> 0020.HK
+  // Yahoo 港股代码取后 4 位（0700.HK / 0020.HK / 9988.HK），不能去前导零：
+  // hk00020 写成 20.HK 是无效代码，商汤这类 00xxx 主板股会彻底查不到
   const m = String(code).toLowerCase().match(/^(sh|sz|hk)(\d{4,6})$/)
   if (!m) return null
   if (m[1] === 'sh') return m[2] + '.SS'
   if (m[1] === 'sz') return m[2] + '.SZ'
-  return String(Number(m[2])) + '.HK'   // 港股去前导零
+  return m[2].slice(-4) + '.HK'
 }
 
 function klineSourceChain(market, code, period, count) {
@@ -334,19 +336,29 @@ function klineSourceChain(market, code, period, count) {
   ]
 }
 
-// 顺序尝试链路上的源，第一个成功即返回（rows.source 标记实际来源）；
-// 全部失败时汇总每个源的报错，便于排查
-async function tryKlineChain(label, chain) {
+// 顺序尝试链路上的源，第一个成功即返回（rows.source 标记实际来源）。
+// 数量守门：返回根数明显低于预期（如 Yahoo 对A股分钟数据时有时无）时视为可疑，
+// 继续试下一个源（即用户说的"数量小于预期就再测"）；全部源都偏少时，
+// 取返回最全的一份——次新股/长期停牌的历史本来就短，不能硬拒。
+async function tryKlineChain(label, chain, count) {
   const attempts = []
+  let best = null
   for (const { name, fn } of chain) {
     try {
       const rows = await fn()
       rows.source = name
+      const minRows = Math.min(count, Math.max(5, Math.floor(count * 0.25)))
+      if (rows.length > 0 && rows.length < minRows) {
+        attempts.push(`${name}: rows ${rows.length} < ${minRows}, suspicious`)
+        if (!best || rows.length > best.length) best = rows
+        continue
+      }
       return rows
     } catch (e) {
       attempts.push(`${name}: ${e.message}`)
     }
   }
+  if (best) return best
   throw new Error(`${label} | ${attempts.join(' | ')}`)
 }
 
@@ -359,7 +371,7 @@ async function fetchAStockKline(code, period, count) {
   const ttl = (period === 'min5' || period === 'min60') ? CACHE_TTL_KLINE_MINUTE : CACHE_TTL_KLINE
 
   return getCached(cacheKey, async () => {
-    return await tryKlineChain('A股K线全部失败', klineSourceChain('a', code, period, count))
+    return await tryKlineChain('A股K线全部失败', klineSourceChain('a', code, period, count), count)
   }, ttl)
 }
 
@@ -441,7 +453,7 @@ async function fetchUSKline(symbol, period, count) {
   const ttl = (period === 'min5' || period === 'min60') ? CACHE_TTL_KLINE_MINUTE : CACHE_TTL_KLINE
 
   return getCached(cacheKey, async () => {
-    return await tryKlineChain('US kline failed', klineSourceChain('us', cleanSymbol, period, count))
+    return await tryKlineChain('US kline failed', klineSourceChain('us', cleanSymbol, period, count), count)
   }, ttl)
 }
 
@@ -450,7 +462,10 @@ async function fetchUSKline(symbol, period, count) {
 // 这里改为先取最后 N 个索引，再按原索引对齐取 OHLC
 async function fetchYahooKline(symbol, period, count) {
   // period 已在路由层过白名单（day/week/min5/min60）
-  const rangeMap = { day: '6mo', week: '2y', min5: '5d', min60: '1mo' }
+  // 分钟周期窗口给宽一些（5m 数据 Yahoo 最多保留约 60 天，60m 约 2 年）：
+  // 窄窗口在 A股/港股分钟数据稀疏时只回几根，导致图表根数忽多忽少；
+  // 窗口加宽后 slice(-count) 永远取最新 count 根
+  const rangeMap = { day: '6mo', week: '2y', min5: '1mo', min60: '3mo' }
   const intMap = { day: '1d', week: '1wk', min5: '5m', min60: '60m' }
   const range = rangeMap[period] || '6mo'
   const interval = intMap[period] || '1d'
