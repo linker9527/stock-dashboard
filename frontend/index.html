@@ -44,6 +44,18 @@
     }
     .top-bar .top-actions button:hover { background: #4a90d9; color: #fff; border-color: #4a90d9; }
     .top-bar .top-actions button:disabled { opacity: .55; cursor: wait; }
+    .top-bar .top-actions select {
+      padding: 6px 8px;
+      background: #2a2a2a;
+      color: #bbb;
+      border: 1px solid #444;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      outline: none;
+      color-scheme: dark;  /* 原生下拉列表也用暗色渲染 */
+    }
+    .top-bar .top-actions select:hover { border-color: #4a90d9; }
 
     /* 导出/导入密钥弹窗 */
     .modal-mask {
@@ -412,6 +424,12 @@
   <div class="top-bar">
     <h1>📈 股票看板</h1>
     <div class="top-actions">
+      <select id="klinePeriod" title="切换K线周期，对所有卡片生效">
+        <option value="day">日K</option>
+        <option value="week">周K</option>
+        <option value="min5">5分钟K</option>
+        <option value="min60">60分钟K</option>
+      </select>
       <button id="retryKlineBtn" onclick="retryAllKlines()" title="绕过 60 秒节流，强制所有自选股重新拉取 K 线；主源恢复后下一次就会回到主源">↻ 重试K线</button>
       <button onclick="exportKey()" title="把自选股编码成一段密钥，带到别的浏览器或设备">⤓ 导出</button>
       <button onclick="importKey()" title="粘贴别处导出的密钥，恢复自选股">⤒ 导入</button>

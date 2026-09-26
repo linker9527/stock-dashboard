@@ -107,6 +107,17 @@ function normalizeCode(input) {
 // 市场标签（用于下拉显示）
 const MARKET_LABEL = { '1': '沪市', '0': '深市', '105': '纳斯达克', '106': '纽交所', '107': 'Arca/ETF', '116': '港股' };
 
+// K线周期（全局，右上角下拉切换）。后端 /api/kline 白名单：day/week/min5/min60
+// 本地用 localStorage 记住选择，刷新不重置；导出密钥一并携带（见 buildKey 的 -w/-5/-60 后缀）
+const PERIOD_LABEL = { day: '日K', week: '周K', min5: '5分钟K', min60: '60分钟K' };
+const PERIOD_STORAGE_KEY = 'stock_kline_period';
+let klinePeriod = (() => {
+  try {
+    const saved = localStorage.getItem(PERIOD_STORAGE_KEY);
+    return (saved && PERIOD_LABEL[saved]) ? saved : 'day';
+  } catch (e) { return 'day'; }
+})();
+
 async function addStock() {
   const input = document.getElementById('searchInput');
   const raw = input.value.trim();
@@ -207,7 +218,7 @@ async function fetchQuote(code) {
 }
 
 async function fetchKline(code) {
-  const url = `${API_BASE}/api/kline?code=${encodeURIComponent(code)}&period=day&count=60`;
+  const url = `${API_BASE}/api/kline?code=${encodeURIComponent(code)}&period=${encodeURIComponent(klinePeriod)}&count=60`;
   const res = await fetch(url);
   const json = await res.json();
   
@@ -354,7 +365,7 @@ function render() {
         <div class="loading" style="grid-column: span 2; text-align:center;">加载中...</div>
       </div>
       <div class="chart-bar">
-        <span>日K</span>
+        <span class="kline-period" id="kperiod-${code}">${PERIOD_LABEL[klinePeriod]}</span>
         <span class="kline-tag" id="ksrc-${code}">K线加载中</span>
       </div>
       <div class="chart-container" id="chart-${code}"></div>
@@ -559,6 +570,7 @@ function updateOfflineBanner() {
 }
 
 const CHART_CACHE = {};          // code -> 最近一次成功拉取的时间戳
+const CHART_GEN = {};            // code -> 最新一次图表请求的代数（周期切换/强拉时旧响应作废）
 const KLINE_INTERVAL = 60000;    // K线 60 秒才重拉一次（行情 5 秒）
 
 // 简化的K线图（用 canvas 手绘，不用额外库）
@@ -574,15 +586,24 @@ async function loadChart(code, force = false) {
   // 失败也记录尝试时间：之前只在成功时写，持续失败的股票会每 5 秒白打一次
   // 上游（一天约 1.7 万请求），还会加剧东财的 IP 限流（NEW-8）
   CHART_CACHE[code] = now;
+  // 竞态防护：切周期/强拉后，旧周期的在途响应不得覆盖新图
+  // （注意 gen 只在真正发起请求时递增，节流早退不算，否则慢响应会被误杀）
+  const gen = (CHART_GEN[code] = (CHART_GEN[code] || 0) + 1);
 
   try {
     const json = await fetchKline(code);
+    if (CHART_GEN[code] !== gen) return;  // 已有更新的请求，丢弃过期响应
     const data = json.data;
-    if (!data || !data.length) return;
+    if (!data || !data.length) {
+      // 请求成功但该周期无数据（长期停牌的分钟线等）：清掉旧周期残图，明确提示
+      container.innerHTML = '<div class="loading" style="text-align:center;padding-top:80px;">该周期暂无K线数据</div>';
+      return;
+    }
 
     drawChart(container, data);
     updateKlineTag(code, json.source, json.stale);
   } catch (e) {
+    if (CHART_GEN[code] !== gen) return;
     // 失败不重建容器，避免每 5 秒闪一次"加载失败"
     if (!container.querySelector('canvas') && !container.querySelector('.loading')) {
       container.innerHTML = '<div class="loading" style="text-align:center;padding-top:80px;">K线加载失败</div>';
@@ -703,6 +724,23 @@ async function retryAllKlines() {
 
 // ========== 工具函数 ==========
 
+// 右上角周期下拉（全局）：切换后所有卡片绕过 60 秒节流强制重拉，
+// 旧周期的在途响应由 CHART_GEN 作废，卡片上的周期小标签同步更新。
+// 选择持久化到 localStorage，刷新后保持
+function bindPeriodSelect() {
+  const sel = document.getElementById('klinePeriod');
+  if (!sel) return;
+  sel.value = klinePeriod;   // 本地记住的周期先同步到下拉框
+  sel.addEventListener('change', () => {
+    klinePeriod = sel.value;
+    try { localStorage.setItem(PERIOD_STORAGE_KEY, klinePeriod); } catch (e) {}
+    watchlist.forEach(code => loadChart(code, true));
+    document.querySelectorAll('.kline-period').forEach(el => {
+      el.textContent = PERIOD_LABEL[klinePeriod] || klinePeriod;
+    });
+  });
+}
+
 function formatVolume(v) {
   if (v == null) return '-';
   if (v === 0) return '0';
@@ -723,11 +761,17 @@ function formatAmount(v) {
 // 只打包 watchlist —— localStorage 里唯一持久化的状态。
 // 不含密码、凭证、个人信息，明文分享没有问题。
 //
-// 格式：SDKB.<版本>.<base64url(JSON)>.<fnv1a 校验码>
+// 格式：SDKB.<版本>.<base64url(JSON)>.<fnv1a 校验码>[-<周期>]
 //   base64url  —— 用 -_ 替 +/ 并去掉 =，避免复制粘贴时被改写或截断
 //   校验码     —— 抓「没复制全 / 中间缺字」这种最常见的失败，而不是让它静默导入错内容
+//   周期后缀   —— 可选：-w 周K / -5 五分钟 / -60 六十分钟；日K 是默认，无后缀。
+//                 校验码只覆盖 body，后缀只是图表偏好，被改了也无伤大雅。
+//                 base36 校验码不含 '-'，所以末尾的 -<周期> 不会和 body 混淆；
+//                 老密钥（无后缀）照常导入，周期回落日K
 const EXPORT_MAGIC = 'SDKB';
 const EXPORT_VER = 1;
+const PERIOD_SUFFIX = { week: 'w', min5: '5', min60: '60' };
+const SUFFIX_PERIOD = { w: 'week', 5: 'min5', 60: 'min60' };
 
 function b64urlEncode(obj) {
   const bytes = new TextEncoder().encode(JSON.stringify(obj));
@@ -751,12 +795,22 @@ function fnv1a(s) {
 
 function buildKey() {
   const body = b64urlEncode({ v: EXPORT_VER, t: Date.now(), watchlist: watchlist.slice() });
-  return `${EXPORT_MAGIC}.${EXPORT_VER}.${body}.${fnv1a(body)}`;
+  const suffix = PERIOD_SUFFIX[klinePeriod];
+  return `${EXPORT_MAGIC}.${EXPORT_VER}.${body}.${fnv1a(body)}` + (suffix ? `-${suffix}` : '');
 }
 
 function parseKey(str) {
-  const s = String(str).trim();
+  let s = String(str).trim();
   if (!s) return { error: '密钥为空' };
+
+  // 周期后缀（可选）：校验码是 base36 不含 '-'，末尾的 -w/-5/-60 只能是我们加的
+  let period = 'day';
+  const sm = s.match(/-(w|5|60)$/);
+  if (sm) {
+    period = SUFFIX_PERIOD[sm[1]];
+    s = s.slice(0, -sm[0].length);
+  }
+
   const p = s.split('.');
   if (p.length !== 4) return { error: '格式不对，应为 标识.版本.内容.校验码' };
   if (p[0] !== EXPORT_MAGIC) return { error: '这不是本看板的导出密钥' };
@@ -765,7 +819,7 @@ function parseKey(str) {
   try {
     const data = b64urlDecode(p[2]);
     if (!Array.isArray(data.watchlist)) return { error: '密钥内容损坏：缺少自选股列表' };
-    return { data };
+    return { data, period };
   } catch (e) {
     return { error: '内容解析失败：' + e.message };
   }
@@ -791,7 +845,7 @@ function exportKey() {
   if (!watchlist.length) { flash('自选股为空，没有内容可导出'); return; }
   const key = buildKey();
   openModal('导出密钥', `
-    <div class="hint-line">这段是自选股列表的编码，<strong>不含任何密码或隐私</strong>，可以放心分享。</div>
+    <div class="hint-line">这段是自选股列表的编码（含K线周期偏好），<strong>不含任何密码或隐私</strong>，可以放心分享。</div>
     <div class="hint-line">在别的浏览器/设备上打开本页 → 点「⤒ 导入」→ 粘贴 → 恢复。</div>
     <textarea id="exportText" readonly>${escapeHtml(key)}</textarea>
     <div class="modal-foot">
@@ -864,16 +918,32 @@ function doImport() {
     const normalized = normalizeCode(code);
     if (normalized && !watchlist.includes(normalized)) { watchlist.push(normalized); added++; }
   }
+
+  // 恢复K线周期偏好（老密钥无后缀 = 日K）。必须在 render 之前改 klinePeriod，
+  // 新建卡片的周期小标签才不会先画成旧值
+  const periodChanged = r.period !== klinePeriod;
+  if (periodChanged) {
+    klinePeriod = r.period;
+    try { localStorage.setItem(PERIOD_STORAGE_KEY, klinePeriod); } catch (e) {}
+    const sel = document.getElementById('klinePeriod');
+    if (sel) sel.value = klinePeriod;
+  }
+
   saveWatchlist();
   render();
   closeModal();
-  flash(`导入完成：${valid.length} 只，新增 ${added} 只` + (dropped ? `，丢弃 ${dropped} 个非法代码` : ''));
+  flash(`导入完成：${valid.length} 只，新增 ${added} 只`
+    + (dropped ? `，丢弃 ${dropped} 个非法代码` : '')
+    + (periodChanged ? `，K线已切换为${PERIOD_LABEL[klinePeriod]}` : ''));
 }
 
 // ========== 初始化 ==========
 
 // 绑定搜索框（输入防抖搜索 + 键盘上下选择 + 回车添加）
 bindSearch();
+
+// 绑定 K线周期下拉
+bindPeriodSelect();
 
 // 全局轮询：初始化时注册一次，绝不随 render() 重建，
 // 否则用户增删股票后轮询会静默停摆（BUG-1）
