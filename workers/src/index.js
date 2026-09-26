@@ -265,61 +265,102 @@ async function fetchHKStockQuote(code) {
   })
 }
 
-// 港股K线：主腾讯（CF 出口稳定）→ 备东财
+// 港股K线：主腾讯（CF 出口稳定）→ 兜底链见 klineSourceChain
 async function fetchHKStockKline(code, period, count) {
   const cacheKey = `kline_hk_${code}_${period}_${count}`
+  const ttl = (period === 'min5' || period === 'min60') ? CACHE_TTL_KLINE_MINUTE : CACHE_TTL_KLINE
 
   return getCached(cacheKey, async () => {
-    const attempts = []
-
-    try {
-      const rows = await fetchTencentHKKline(code, period, count)
-      rows.source = 'tencent'
-      return rows
-    } catch (e) {
-      attempts.push(`tencent: ${e.message}`)
-    }
-
-    try {
-      const rows = await fetchEastmoneyKline(code, period, count)
-      rows.source = 'eastmoney'
-      return rows
-    } catch (e) {
-      attempts.push(`eastmoney: ${e.message}`)
-    }
-
-    throw new Error(`HK kline failed | ${attempts.join(' | ')}`)
-  }, CACHE_TTL_KLINE)
+    return await tryKlineChain('HK kline failed', klineSourceChain('hk', code, period, count))
+  }, ttl)
 }
 
-// A股K线：主腾讯（CF 出口稳定）→ 备新浪 → 兜底东财
-// 返回 K线数组，数组上挂载 source 字段便于路由层透出
+// ========== K线源支持矩阵（按周期排链路） ==========
+// 各源对K线周期的实际支持情况（实测结论，详见各数据源文件头注释）：
+//   腾讯：只支持 day / week —— 分钟参数实测只回当天 1 根，等价不支持
+//   新浪：名义支持 day/week/min5/min60，但 K线接口已失效（降级测试验证）
+//   东财：day / week / min5 / min60 全支持
+//   Yahoo：day / week / min5 / min60 全支持（需带交易所后缀）
+// 链路按「该周期实际可用的源」顺序排列，不支持的源不再进链路空耗超时
+// （此前切分钟K要先白等腾讯秒抛 + 新浪 6 秒超时，才轮到真正支持的东财）。
+// 分钟周期只有东财（A股/港股）/ Yahoo（美股）一个稳定源，Yahoo 兜底防生产
+// 环境 CF 出口被东财拦截时分钟K彻底没数。
+function toYahooKlineSymbol(code) {
+  // sh600519 -> 600519.SS  sz000001 -> 000001.SZ  hk00700 -> 0700.HK
+  const m = String(code).toLowerCase().match(/^(sh|sz|hk)(\d{4,6})$/)
+  if (!m) return null
+  if (m[1] === 'sh') return m[2] + '.SS'
+  if (m[1] === 'sz') return m[2] + '.SZ'
+  return String(Number(m[2])) + '.HK'   // 港股去前导零
+}
+
+function klineSourceChain(market, code, period, count) {
+  const isMinute = period === 'min5' || period === 'min60'
+
+  if (market === 'us') {
+    if (isMinute) {
+      return [{ name: 'yahoo', fn: () => fetchYahooKline(code, period, count) }]
+    }
+    return [
+      { name: 'tencent', fn: () => fetchTencentUSKline(code, period, count) },
+      { name: 'yahoo', fn: () => fetchYahooKline(code, period, count) }
+    ]
+  }
+
+  if (market === 'hk') {
+    if (isMinute) {
+      const ysym = toYahooKlineSymbol(code)
+      const chain = [{ name: 'eastmoney', fn: () => fetchEastmoneyKline(code, period, count) }]
+      if (ysym) chain.push({ name: 'yahoo', fn: () => fetchYahooKline(ysym, period, count) })
+      return chain
+    }
+    return [
+      { name: 'tencent', fn: () => fetchTencentHKKline(code, period, count) },
+      { name: 'eastmoney', fn: () => fetchEastmoneyKline(code, period, count) }
+    ]
+  }
+
+  // A股
+  if (isMinute) {
+    const ysym = toYahooKlineSymbol(code)
+    const chain = [{ name: 'eastmoney', fn: () => fetchEastmoneyKline(code, period, count) }]
+    if (ysym) chain.push({ name: 'yahoo', fn: () => fetchYahooKline(ysym, period, count) })
+    return chain
+  }
+  return [
+    { name: 'tencent', fn: () => fetchTencentAKline(code, period, count) },
+    { name: 'sina', fn: () => fetchSinaKline(code, period, count) },
+    { name: 'eastmoney', fn: () => fetchEastmoneyKline(code, period, count) }
+  ]
+}
+
+// 顺序尝试链路上的源，第一个成功即返回（rows.source 标记实际来源）；
+// 全部失败时汇总每个源的报错，便于排查
+async function tryKlineChain(label, chain) {
+  const attempts = []
+  for (const { name, fn } of chain) {
+    try {
+      const rows = await fn()
+      rows.source = name
+      return rows
+    } catch (e) {
+      attempts.push(`${name}: ${e.message}`)
+    }
+  }
+  throw new Error(`${label} | ${attempts.join(' | ')}`)
+}
+
+// 分钟K每根bar都在变，缓存 TTL 与日/周K分开（日K数据一天才变一次）
+const CACHE_TTL_KLINE_MINUTE = 60000
+
+// A股K线：主腾讯（CF 出口稳定）→ 兜底链见 klineSourceChain
 async function fetchAStockKline(code, period, count) {
   const cacheKey = `kline_a_${code}_${period}_${count}`
+  const ttl = (period === 'min5' || period === 'min60') ? CACHE_TTL_KLINE_MINUTE : CACHE_TTL_KLINE
 
   return getCached(cacheKey, async () => {
-    const attempts = []
-
-    try {
-      const rows = await fetchTencentAKline(code, period, count)
-      rows.source = 'tencent'
-      return rows
-    } catch (e) { attempts.push(`tencent: ${e.message}`) }
-
-    try {
-      const rows = await fetchSinaKline(code, period, count)
-      rows.source = 'sina'
-      return rows
-    } catch (e) { attempts.push(`sina: ${e.message}`) }
-
-    try {
-      const rows = await fetchEastmoneyKline(code, period, count)
-      rows.source = 'eastmoney'
-      return rows
-    } catch (e) { attempts.push(`eastmoney: ${e.message}`) }
-
-    throw new Error(`A股K线全部失败 | ${attempts.join(' | ')}`)
-  }, CACHE_TTL_KLINE)
+    return await tryKlineChain('A股K线全部失败', klineSourceChain('a', code, period, count))
+  }, ttl)
 }
 
 // 美股查询：主腾讯（国内稳定）→ 备 Yahoo
@@ -393,26 +434,15 @@ async function fetchYahooQuote(symbol) {
   }
 }
 
-// 美股K线：主腾讯 → 备 Yahoo
+// 美股K线：主腾讯 → 兜底链见 klineSourceChain
 async function fetchUSKline(symbol, period, count) {
   const cacheKey = `kline_us_${symbol}_${period}_${count}`
   const cleanSymbol = symbol.toUpperCase()
+  const ttl = (period === 'min5' || period === 'min60') ? CACHE_TTL_KLINE_MINUTE : CACHE_TTL_KLINE
 
   return getCached(cacheKey, async () => {
-    try {
-      const rows = await fetchTencentUSKline(cleanSymbol, period, count)
-      rows.source = 'tencent'
-      return rows
-    } catch (e1) {
-      try {
-        const rows = await fetchYahooKline(cleanSymbol, period, count)
-        rows.source = 'yahoo'
-        return rows
-      } catch (e2) {
-        throw new Error(`US kline failed | tencent: ${e1.message} | yahoo: ${e2.message}`)
-      }
-    }
-  }, CACHE_TTL_KLINE)
+    return await tryKlineChain('US kline failed', klineSourceChain('us', cleanSymbol, period, count))
+  }, ttl)
 }
 
 // Yahoo 美股K线（备源）

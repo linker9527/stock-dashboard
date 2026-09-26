@@ -22,6 +22,15 @@ let globalTimer = null;   // 全局 5 秒轮询，初始化时注册一次，不
 const SOURCE_LABEL = { eastmoney: '东财', sina: '新浪', tencent: '腾讯', yahoo: 'Yahoo' };
 const PRIMARY_SOURCE = { a: 'tencent', hk: 'tencent', us: 'tencent' };
 
+// K线主源按周期而定：分钟K（5/60分）只有东财（A股/港股）和 Yahoo（美股）支持，
+// 从它们拿数是「该周期唯一的稳定源」而不是降级，不打「·备源」标；
+// 日/周K 的主源仍是腾讯（与后端 klineSourceChain 的排序一一对应）
+const PRIMARY_KLINE_SOURCE = {
+  a:  { day: 'tencent', week: 'tencent', min5: 'eastmoney', min60: 'eastmoney' },
+  hk: { day: 'tencent', week: 'tencent', min5: 'eastmoney', min60: 'eastmoney' },
+  us: { day: 'tencent', week: 'tencent', min5: 'yahoo',     min60: 'yahoo' }
+};
+
 function marketOf(code) {
   const c = String(code).toLowerCase();
   if (/^(sh|sz)/.test(c)) return 'a';
@@ -31,11 +40,17 @@ function marketOf(code) {
 function primarySourceOf(code) {
   return PRIMARY_SOURCE[marketOf(code)] || 'eastmoney';
 }
-// 主源直接显示名；备源加「·备源」后缀，一眼看出是降级
-function sourceLabel(source, code) {
+function primaryKlineSourceOf(code, period) {
+  const row = PRIMARY_KLINE_SOURCE[marketOf(code)];
+  return (row && row[period]) || 'tencent';
+}
+// 主源直接显示名；备源加「·备源」后缀，一眼看出是降级。
+// 传 period 时按该周期的K线主源判断（分钟线主源与行情主源不同）
+function sourceLabel(source, code, period) {
   const name = SOURCE_LABEL[source] || source || 'unknown';
   if (!source) return name;
-  return source === primarySourceOf(code) ? name : name + '·备源';
+  const primary = period ? primaryKlineSourceOf(code, period) : primarySourceOf(code);
+  return source === primary ? name : name + '·备源';
 }
 
 // ========== 本地存储 ==========
@@ -601,7 +616,7 @@ async function loadChart(code, force = false) {
     }
 
     drawChart(container, data);
-    updateKlineTag(code, json.source, json.stale);
+    updateKlineTag(code, json.source, json.stale, klinePeriod);
   } catch (e) {
     if (CHART_GEN[code] !== gen) return;
     // 失败不重建容器，避免每 5 秒闪一次"加载失败"
@@ -691,16 +706,18 @@ function drawChart(container, klineData) {
 // 把 K 线实际数据源同步到卡片角标。
 // K 线和行情可能来自不同源（K线节流 60 秒、行情 5 秒，重试节奏不同），
 // 不同源时角标高亮，免得"图上价格 ≠ 卡片价格"却没有任何解释。
-function updateKlineTag(code, source, stale) {
+// 判定主源时传入当前周期：分钟线从东财/Yahoo 拿数是正常来源，不算降级
+function updateKlineTag(code, source, stale, period) {
   const el = document.getElementById(`ksrc-${code}`);
   if (!el) return;
-  const degraded = !!source && source !== primarySourceOf(code);
-  let label = sourceLabel(source, code);
+  const p = period || 'day';
+  const degraded = !!source && source !== primaryKlineSourceOf(code, p);
+  let label = sourceLabel(source, code, p);
   if (stale) label += '·旧';
   el.textContent = label;
   el.className = 'kline-tag' + (degraded ? ' degraded' : '');
   el.title = degraded
-    ? `K线主源不可用，已降级到 ${SOURCE_LABEL[source] || source}`
+    ? `该周期的主源不可用，已降级到 ${SOURCE_LABEL[source] || source}`
     : `K线数据源：${SOURCE_LABEL[source] || source}`;
 }
 
