@@ -497,17 +497,22 @@ export default {
         // market -> 前缀，统一转成本项目使用的代码格式
         // 1=沪市(sh) 0=深市(sz) 105=纳斯达克(us) 106=纽交所(us) 107=NYSE Arca/Amex(us) 116=港股(hk)
         const prefixMap = { '1': 'sh', '0': 'sz', '105': '', '106': '', '107': '', '116': 'hk' }
+        // 搜索结果的 code 会被前端拼进 DOM id 和自选列表，必须过白名单
+        //（与前端 isSafeCode 对齐）。上游 Code 异常时丢弃该条而不是放行（NEW-14）
+        const SAFE_SEARCH_CODE = /^(sh|sz)\d{6}$|^hk\d{4,5}$|^[A-Za-z][A-Za-z.\-]{0,4}$/
 
         const items = rawItems.map(item => {
           const mkt = String(item.MktNum)
-          const rawCode = item.Code
+          const rawCode = String(item.Code ?? '')
           // A股和港股用 sh/sz/hk 前缀，美股直接用原始代码
           const prefix = prefixMap[mkt]
           // 未知市场（伦敦 155 等）直接丢弃：曾经默认套 sh，
           // 把 Arca ETF 变成 shspy、把海外票变成 shbrk 这种垃圾代码（NEW-2）
           if (prefix === undefined) return null
+          const code = prefix ? prefix + rawCode.toLowerCase() : rawCode
+          if (!SAFE_SEARCH_CODE.test(code)) return null
           return {
-            code: prefix ? prefix + rawCode.toLowerCase() : rawCode,
+            code: code,
             name: item.Name,
             market: mkt,
             rawCode: rawCode
@@ -640,6 +645,15 @@ export default {
     }
 
     // 非 API 请求 → 前端静态文件
-    return ASSETS.fetch(request)
+    // ASSETS 是 wrangler [assets] 的绑定，只在 Cloudflare 环境存在；
+    // 本地 Node（测试/server.js）没有这个全局，兜底回 404 JSON，
+    // 否则任何未匹配路径都会 ReferenceError（e2e 第 9 节曾因此 FATAL 崩掉）
+    if (typeof ASSETS !== 'undefined' && ASSETS) {
+      return ASSETS.fetch(request)
+    }
+    return new Response(JSON.stringify({ error: 'Not found' }), {
+      status: 404,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json; charset=utf-8' }
+    })
   }
 }

@@ -53,7 +53,13 @@ function loadWatchlist() {
 }
 
 function saveWatchlist() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(watchlist));
+  // 隐身模式/存储配额满时 setItem 会抛异常：不接住的话 addStock/removeStock
+  // 会在 push 之后中断，render 不执行，界面看起来"点了没反应"（NEW-14）
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(watchlist));
+  } catch (e) {
+    // 内存态仍然可用，只是刷新后不保留
+  }
 }
 
 // ========== 股票卡片操作 ==========
@@ -142,6 +148,14 @@ async function addStock() {
 
   if (!code) return;
 
+  // 白名单校验：code 会被拼进卡片 DOM id（render 的模板不转义），
+  // 导入/加载路径有 isSafeCode 把关，搜索添加路径此前漏了（NEW-14）。
+  // 上游搜索结果的 Code 万一携带异常字符，在这里拦下而不是进 watchlist
+  if (!isSafeCode(code)) {
+    flash('不支持的代码格式：' + code);
+    return;
+  }
+
   if (watchlist.includes(code)) {
     flash('已在自选里了');
   } else {
@@ -226,9 +240,11 @@ function renderSuggest(results) {
   activeIndex = -1;
   box.innerHTML = results.map((r, i) => {
     const mkt = MARKET_LABEL[r.market] || r.market;
+    // name/rawCode/market 都来自上游接口，进模板前必须转义：
+    // name 有 esc() 但 rawCode/market 曾裸奔——同一注入面（NEW-14）
     return `<div class="suggest-item" data-i="${i}" onclick="pickSuggest(${i})">
-      <span><span class="suggest-name">${esc(r.name)}</span><span class="suggest-code"> ${r.rawCode}</span></span>
-      <span class="suggest-market">${mkt}</span>
+      <span><span class="suggest-name">${esc(r.name)}</span><span class="suggest-code"> ${esc(r.rawCode)}</span></span>
+      <span class="suggest-market">${esc(mkt)}</span>
     </div>`;
   }).join('');
   box.classList.add('show');

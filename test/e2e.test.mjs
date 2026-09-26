@@ -106,10 +106,13 @@ async function main() {
   }
 
   console.log('\n=== 6d. count 限幅（BUG-7）===')
-  for (const [n, want] of [[-5, 1], [0, 1], [99999999, 1000], ['abc', 100], [10, 10]]) {
+  // 99999999 限幅后是 1000，但腾讯日K上游最多回约 640 根（自身上限），
+  // 所以这里断言「未透传、且落在限幅区间内」而不是写死 1000
+  for (const [n, want] of [[-5, 1], [0, 1], [99999999, 'cap'], ['abc', 100], [10, 10]]) {
     const r = await call(`/api/kline?code=sh600519&count=${encodeURIComponent(String(n))}`)
     const got = r.json.data ? r.json.data.length : -1
-    console.log(`  ${got === want ? '✅' : '❌'} count=${String(n).padEnd(9)} -> rows=${got}`)
+    const pass = want === 'cap' ? (got > 0 && got <= 1000) : got === want
+    console.log(`  ${pass ? '✅' : '❌'} count=${String(n).padEnd(9)} -> rows=${got}`)
   }
 
   console.log('\n=== 7. 分钟K线必须显式抛错（腾讯不支持）===')

@@ -45,10 +45,13 @@ async function main() {
     globalThis.fetch = origFetch
   }
 
-  console.log('\n=== 4. A股行情降级链（东财挂 → 新浪正常）===')
+  console.log('\n=== 4. A股行情降级链（腾讯/东财挂 → 新浪兜底）===')
   try {
     globalThis.fetch = async (url, opts) => {
-      if (typeof url === 'string' && url.includes('push2')) throw new Error('eastmoney down')
+      const u = typeof url === 'string' ? url : String(url)
+      // 主源腾讯和备源东财都掐掉，才能真正测到新浪兜底
+      //（主源已换成腾讯后，只掐东财会命中腾讯主源，断言永远落空）
+      if (u.includes('push2') || u.includes('qt.gtimg.cn')) throw new Error('down')
       return origFetch(url, opts)
     }
     r = await call('/api/quote?code=sh600519')

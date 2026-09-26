@@ -27,3 +27,8 @@ compatibility_flags = ["nodejs_compat"]
 # 前端静态文件 — Worker 同时提供前端页面和 API
 [assets]
 directory = "../frontend/"
+# 必须显式声明绑定：index.js 的兜底分支用 ASSETS.fetch 处理未匹配路径。
+# 不声明的话资产本身仍会被自动服务（/ 和 /app.js 等正常），
+# 但 Worker 里 ASSETS 是 undefined，访问 /favicon.ico 等未匹配路径
+# 会变成 1101 错误页而不是干净的 404
+binding = "ASSETS"

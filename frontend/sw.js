@@ -1,6 +1,6 @@
 /* 股票看板 Service Worker — 缓存优先策略 */
 // 版本号每次部署时递增，旧缓存自动失效
-const CACHE_NAME = 'stock-dash-v3';
+const CACHE_NAME = 'stock-dash-v4';
 const ASSETS = ['/', '/index.html', '/app.js'];
 
 self.addEventListener('install', event => {
