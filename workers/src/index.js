@@ -344,7 +344,7 @@ async function fetchUSQuote(symbol) {
 
 // Yahoo Finance 美股行情（备源）
 async function fetchYahooQuote(symbol) {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}`
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?range=1d&interval=1d`
 
   const response = await fetchWithTimeout(url, {
     headers: {
