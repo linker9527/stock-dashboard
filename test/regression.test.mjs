@@ -250,6 +250,52 @@ async function main() {
   }
   restore()
 
+  // ========== NEW-15：补名长缓存（东财 searchapi 防风控） ==========
+  console.log('\n=== NEW-15 补名长缓存：quote 缓存过期后不再重打 searchapi ===')
+  {
+    let searchHits = 0
+    const arr = new Array(30).fill('1')
+    arr[0] = '\ufffd\ufffd\ufffd'
+    arr[1] = '100'; arr[2] = '99'; arr[3] = '101'; arr[4] = '102'; arr[5] = '98'
+    mockFetch(async url => {
+      url = String(url)
+      if (url.includes('push2.eastmoney.com')) throw new Error('push2 down')
+      if (url.includes('hq.sinajs.cn')) return textResp(`var hq_str_sh600980="${arr.join(',')}"`)
+      if (url.includes('searchapi.eastmoney.com')) {
+        searchHits++
+        return jsonResp({ QuotationCodeTable: { Data: [{ Code: '600980', Name: '测试股份', MktNum: 1 }] } })
+      }
+      throw new Error('unexpected ' + url)
+    })
+    const r1 = await call('/api/quote?code=sh600980')
+    const origNow = Date.now
+    Date.now = () => origNow() + 10000   // 推过 3 秒 quote 缓存（模拟下一轮 5 秒轮询）
+    const r2 = await call('/api/quote?code=sh600980')
+    Date.now = origNow
+    ok('第一次补名成功', r1.json.data && r1.json.data.name === '测试股份')
+    ok('quote 缓存过期后补名不再打 searchapi', searchHits === 1, 'hits=' + searchHits)
+    ok('名称仍正确（来自长缓存）', r2.json.data && r2.json.data.name === '测试股份')
+  }
+  restore()
+
+  // ========== NEW-16：搜索结果缓存（东财 searchapi 防风控） ==========
+  console.log('\n=== NEW-16 搜索缓存：同关键词 10 分钟内只打一次上游 ===')
+  {
+    let searchHits = 0
+    mockFetch(async url => {
+      if (String(url).includes('searchapi.eastmoney.com')) {
+        searchHits++
+        return jsonResp({ QuotationCodeTable: { Data: [{ Code: '600519', Name: '贵州茅台', MktNum: 1 }] } })
+      }
+      throw new Error('unexpected ' + url)
+    })
+    const s1 = await call('/api/search?q=茅台')
+    const s2 = await call('/api/search?q=茅台')
+    ok('两次搜索只打一次上游', searchHits === 1, 'hits=' + searchHits)
+    ok('两次都返回结果', s1.json.data.length === 1 && s2.json.data.length === 1)
+  }
+  restore()
+
   console.log('\n-----------------------------------')
   console.log(`通过 ${pass} / 失败 ${fail}`)
   process.exit(fail ? 1 : 0)

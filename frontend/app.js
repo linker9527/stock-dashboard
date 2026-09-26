@@ -82,6 +82,13 @@ function saveWatchlist() {
 let searchResults = [];   // 当前搜索建议
 let activeIndex = -1;     // 下拉高亮项（键盘上下键）
 let searchTimer = null;   // 输入防抖
+let searchGen = 0;        // 搜索响应代数：迟到的旧响应不得覆盖新输入的下拉
+
+// 打字型请求的节流阀（东财 searchapi 防风控）：
+// 缓存救不了"一个字一个字敲"的模式——每个按键都是新关键词，必然穿透缓存。
+// 能做的是从源头少打：防抖加长（300→400ms）+ 不足 2 字不搜索
+// （单字命中率极低，雪球等同类的也是 2 字起搜）
+const SEARCH_DEBOUNCE_MS = 400;
 
 // 无歧义代码形式：带市场前缀，或纯 6 位数字（A股）
 //
@@ -318,14 +325,20 @@ function bindSearch() {
     // 只有「带前缀」和「纯6位数字」是确定代码，直连不搜索。
     // 纯字母不能在这里直接判定为代码——见 isDefiniteCode 注释（BUG-11）。
     if (isDefiniteCode(v)) { hideSuggest(); return; }
+    // 不足 2 字不搜索：单字结果的命中率太低，纯属白打上游（防风控）
+    if (v.length < 2) { hideSuggest(); return; }
     searchTimer = setTimeout(async () => {
+      const gen = ++searchGen;
       try {
         const results = await searchStock(v);
+        // 输入已经变了（更新的搜索已发出）：迟到的旧响应不再渲染，
+        // 否则下拉会和输入框内容对不上
+        if (gen !== searchGen) return;
         renderSuggest(results);
       } catch (e) {
-        hideSuggest();
+        if (gen === searchGen) hideSuggest();
       }
-    }, 300);
+    }, SEARCH_DEBOUNCE_MS);
   });
 
   // 键盘导航

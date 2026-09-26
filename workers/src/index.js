@@ -77,6 +77,21 @@ async function resolveANameByCode(code) {
   return null
 }
 
+// ========== 东财 searchapi 防风控 ==========
+// searchapi 承担两个职责：/api/search 搜索建议 + A股补名。此前两处都直连无缓存：
+//  - 前端 5 秒轮询 × quote 缓存 3 秒 ⇒ 每张A股卡片（腾讯源 name=null）每 5 秒
+//    重打一次补名请求，一张 4 卡看板一天约 5 万次 searchapi 调用——
+//    这正是东财风控频繁触发的主因
+//  - 搜索每个防抖键都是一次上游请求，无缓存无去重
+// 股票名称和搜索词几乎不变，加长缓存后 searchapi 调用量趋近于零。
+const NAME_TTL_OK = 24 * 3600 * 1000    // 名称基本不变，成功缓存 24h
+const NAME_TTL_FAIL = 5 * 60 * 1000     // 补名失败短缓存，上游恢复后能及时重试
+const nameCache = new Map()             // code -> { name, time, ttl }
+
+const SEARCH_TTL = 10 * 60 * 1000       // 热门词/重复搜索 10 分钟共享
+const searchCache = new Map()           // keyword -> { items, time }
+const searchInflight = new Map()        // keyword -> Promise（并发同词去重）
+
 // 判断名称是否合法（非乱码）。
 // GBK 内容被当 UTF-8 读会产生 U+FFFD 替换字符，这是最可靠的乱码特征。
 // 合法范围只放两种：ASCII 可打印（英文全名）+ CJK 基本汉字区（中文名）。
@@ -100,7 +115,20 @@ async function fillNameIfMissing(quote) {
   // 非空乱码字符串，判空会直接漏过（BUG-2 漏判点）。
   if (!isGarbledName(quote.name)) return quote
 
+  // 名称走独立长缓存：quote 缓存只有 3 秒，名称若随之重查，
+  // 每次轮询都会打一次 searchapi（调用量估算见上面防风控注释）
+  const hit = nameCache.get(quote.code)
+  if (hit && Date.now() - hit.time < hit.ttl) {
+    return { ...quote, name: hit.name }
+  }
+
   const name = await resolveANameByCode(quote.code)
+  if (nameCache.size > 5000) nameCache.clear()
+  nameCache.set(quote.code, {
+    name: name || null,
+    time: Date.now(),
+    ttl: name ? NAME_TTL_OK : NAME_TTL_FAIL
+  })
   // 补名失败也要把乱码清掉（置 null）：乱码是非空字符串，会让前端
   // `d.name || code` 兜底失效，乱码直达页面（NEW-3）。
   // 置 null 后前端显示代码，符合 README 设计意图。
@@ -504,6 +532,70 @@ async function fetchYahooKline(symbol, period, count) {
   }))
 }
 
+// 搜索建议（东财 searchapi）：带 10 分钟缓存 + 并发同词去重。
+// 多人搜同一热门词、用户反复搜同一个词，都只打一次上游
+async function searchSuggest(keyword) {
+  const key = String(keyword || '').trim()
+  if (!key) return []
+
+  const now = Date.now()
+  const cached = searchCache.get(key)
+  if (cached && now - cached.time < SEARCH_TTL) return cached.items
+
+  const pending = searchInflight.get(key)
+  if (pending) return pending
+
+  const p = (async () => {
+    const encoded = encodeURIComponent(key)
+    const searchUrl = 'https://searchapi.eastmoney.com/api/suggest/get?input='
+      + encoded + '&type=14&token=D43BF722C8E3FBAFAFD3C795D0F0FC45'
+
+    const response = await fetchWithTimeout(searchUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0' }
+    })
+    if (!response.ok) throw new Error(`search HTTP ${response.status}`)
+
+    const data = await response.json()
+    const rawItems = data.QuotationCodeTable?.Data || []
+
+    // market -> 前缀，统一转成本项目使用的代码格式
+    // 1=沪市(sh) 0=深市(sz) 105=纳斯达克(us) 106=纽交所(us) 107=NYSE Arca/Amex(us) 116=港股(hk)
+    const prefixMap = { '1': 'sh', '0': 'sz', '105': '', '106': '', '107': '', '116': 'hk' }
+    // 搜索结果的 code 会被前端拼进 DOM id 和自选列表，必须过白名单
+    //（与前端 isSafeCode 对齐）。上游 Code 异常时丢弃该条而不是放行（NEW-14）
+    const SAFE_SEARCH_CODE = /^(sh|sz)\d{6}$|^hk\d{4,5}$|^[A-Za-z][A-Za-z.\-]{0,4}$/
+
+    const items = rawItems.map(item => {
+      const mkt = String(item.MktNum)
+      const rawCode = String(item.Code ?? '')
+      // A股和港股用 sh/sz/hk 前缀，美股直接用原始代码
+      const prefix = prefixMap[mkt]
+      // 未知市场（伦敦 155 等）直接丢弃：曾经默认套 sh，
+      // 把 Arca ETF 变成 shspy、把海外票变成 shbrk 这种垃圾代码（NEW-2）
+      if (prefix === undefined) return null
+      const code = prefix ? prefix + rawCode.toLowerCase() : rawCode
+      if (!SAFE_SEARCH_CODE.test(code)) return null
+      return {
+        code: code,
+        name: item.Name,
+        market: mkt,
+        rawCode: rawCode
+      }
+    }).filter(x => x && x.name && x.code).slice(0, 10)
+
+    if (searchCache.size > 500) searchCache.clear()
+    searchCache.set(key, { items, time: Date.now() })
+    return items
+  })()
+
+  searchInflight.set(key, p)
+  try {
+    return await p
+  } finally {
+    searchInflight.delete(key)
+  }
+}
+
 export default {
   async fetch(request) {
     const url = new URL(request.url)
@@ -528,43 +620,8 @@ export default {
       }
 
       try {
-        const encoded = encodeURIComponent(keyword.trim())
-        const searchUrl = `https://searchapi.eastmoney.com/api/suggest/get?input=${encoded}&type=14&token=D43BF722C8E3FBAFAFD3C795D0F0FC45`
-
-        const response = await fetchWithTimeout(searchUrl, {
-          headers: { 'User-Agent': 'Mozilla/5.0' }
-        })
-        if (!response.ok) throw new Error(`search HTTP ${response.status}`)
-
-        const data = await response.json()
-        const rawItems = data.QuotationCodeTable?.Data || []
-
-        // market -> 前缀，统一转成本项目使用的代码格式
-        // 1=沪市(sh) 0=深市(sz) 105=纳斯达克(us) 106=纽交所(us) 107=NYSE Arca/Amex(us) 116=港股(hk)
-        const prefixMap = { '1': 'sh', '0': 'sz', '105': '', '106': '', '107': '', '116': 'hk' }
-        // 搜索结果的 code 会被前端拼进 DOM id 和自选列表，必须过白名单
-        //（与前端 isSafeCode 对齐）。上游 Code 异常时丢弃该条而不是放行（NEW-14）
-        const SAFE_SEARCH_CODE = /^(sh|sz)\d{6}$|^hk\d{4,5}$|^[A-Za-z][A-Za-z.\-]{0,4}$/
-
-        const items = rawItems.map(item => {
-          const mkt = String(item.MktNum)
-          const rawCode = String(item.Code ?? '')
-          // A股和港股用 sh/sz/hk 前缀，美股直接用原始代码
-          const prefix = prefixMap[mkt]
-          // 未知市场（伦敦 155 等）直接丢弃：曾经默认套 sh，
-          // 把 Arca ETF 变成 shspy、把海外票变成 shbrk 这种垃圾代码（NEW-2）
-          if (prefix === undefined) return null
-          const code = prefix ? prefix + rawCode.toLowerCase() : rawCode
-          if (!SAFE_SEARCH_CODE.test(code)) return null
-          return {
-            code: code,
-            name: item.Name,
-            market: mkt,
-            rawCode: rawCode
-          }
-        }).filter(x => x && x.name && x.code)
-
-        return new Response(JSON.stringify({ success: true, data: items.slice(0, 10) }), {
+        const items = await searchSuggest(keyword)
+        return new Response(JSON.stringify({ success: true, data: items }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json; charset=utf-8' }
         })
       } catch (e) {
