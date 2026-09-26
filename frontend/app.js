@@ -492,6 +492,9 @@ function markUnsupported(code, msg) {
     sourceEl.title = msg;
   }
 
+  updateOfflineBanner();
+}
+
 function markOffline(code, msg) {
   CARD_STATUS[code] = 'offline';
   const card = document.getElementById(`card-${code}`);
